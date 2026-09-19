@@ -31,7 +31,7 @@ with. The open feature request is
 
 So this plugin works the rendered size out before drawing:
 
-1. `ya.image_info()` gives the cached image its size in pixels.
+1. `ya.image_info()` gives the cached image's size in pixels.
 2. The size of one terminal cell in pixels is learned at runtime, from the first
    draw the rect did not clip. There the image kept its cached pixel size, so
    pixels divided by cells is the size of one cell. It is kept in Yazi's sync
@@ -52,16 +52,30 @@ gap added at the top, which is what centers the two together.
 ## Requirements
 
 - Yazi 26.9.1 or newer
-- Whatever the wrapped previewer needs. The default target, `mediainfo.yazi`,
-  needs the `mediainfo` CLI and ImageMagick.
+- Whatever the wrapped previewer needs. The default target,
+  [mediainfo.yazi](https://github.com/boydaihungst/mediainfo.yazi), needs the
+  `mediainfo` CLI and ImageMagick.
 
-Any image protocol Yazi supports works, including the fallbacks, because the
+Nothing else. If the target previewer is not installed, the previewer Yazi
+itself would have used is used instead, following Yazi's own rules (`image`,
+`magick`, `svg`, `video`, `pdf`), and the result is still centered. You get the
+image without the metadata that the target would have drawn under it, and one
+line in the debug log naming what was missing.
+
+Any image protocol Yazi supports works, including its fallbacks, because the
 geometry is read back from Yazi rather than assumed.
 
 ## Installation
 
 ```sh
 ya pkg add ENEmyr/center-media
+```
+
+This plugin wraps a previewer rather than being one, so install the previewer it
+should wrap as well, unless you only want Yazi's built-in preview centered:
+
+```sh
+ya pkg add boydaihungst/mediainfo
 ```
 
 ## Usage

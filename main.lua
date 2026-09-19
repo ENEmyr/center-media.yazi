@@ -53,6 +53,18 @@ local set_cell = ya.sync(function(state, cell)
 	state.cell = cell
 end)
 
+--- True the first time it is asked about a name. Preload tasks each get their
+--- own Lua state, so a plain local would report a missing previewer once per
+--- file in the directory.
+local first_time = ya.sync(function(state, name)
+	state.warned = state.warned or {}
+	if state.warned[name] then
+		return false
+	end
+	state.warned[name] = true
+	return true
+end)
+
 -- `active` is true only while this plugin's peek is running, which keeps the
 -- patched globals away from every other previewer. `current` additionally pins
 -- metadata centering to the file being previewed. Both are overwritten by each
@@ -203,10 +215,46 @@ local function patch()
 	end
 end
 
+--- What Yazi previews these with when no target previewer is installed, taken
+--- from Yazi's own previewer rules. Ordered, first match wins.
+local BUILTIN = {
+	{ "^image/avif", "magick" },
+	{ "^image/hei", "magick" },
+	{ "^image/jxl", "magick" },
+	{ "^image/svg%+xml", "svg" },
+	{ "^image/", "image" },
+	{ "^video/", "video" },
+	{ "^application/pdf", "pdf" },
+}
+
+local missing = {}
+
 local function target(job)
 	opts = opts or get_opts()
 	local name = job and job.args and job.args[1]
-	return require(type(name) == "string" and name or opts.target)
+	name = type(name) == "string" and name or opts.target
+
+	if not missing[name] then
+		local ok, mod = pcall(require, name)
+		if ok then
+			return mod
+		end
+		missing[name] = mod
+		if first_time(name) then
+			ya.dbg(string.format("center-media: `%s` is not installed, using Yazi's own previewers", name))
+		end
+	end
+
+	-- The configured previewer is not installed. Fall back to the one Yazi
+	-- itself would use, so the file is still previewed and still centered, just
+	-- without whatever the missing previewer would have added to it.
+	local mime = job and job.mime or ""
+	for _, rule in ipairs(BUILTIN) do
+		if mime:find(rule[1]) then
+			return require(rule[2])
+		end
+	end
+	error(missing[name])
 end
 
 --- Previewers only have to implement `peek`, so anything else may be missing.
