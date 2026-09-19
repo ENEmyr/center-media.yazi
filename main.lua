@@ -53,18 +53,6 @@ local set_cell = ya.sync(function(state, cell)
 	state.cell = cell
 end)
 
---- True the first time it is asked about a name. Preload tasks each get their
---- own Lua state, so a plain local would report a missing previewer once per
---- file in the directory.
-local first_time = ya.sync(function(state, name)
-	state.warned = state.warned or {}
-	if state.warned[name] then
-		return false
-	end
-	state.warned[name] = true
-	return true
-end)
-
 -- `active` is true only while this plugin's peek is running, which keeps the
 -- patched globals away from every other previewer. `current` additionally pins
 -- metadata centering to the file being previewed. Both are overwritten by each
@@ -240,14 +228,12 @@ local function target(job)
 			return mod
 		end
 		missing[name] = mod
-		if first_time(name) then
-			ya.dbg(string.format("center-media: `%s` is not installed, using Yazi's own previewers", name))
-		end
 	end
 
-	-- The configured previewer is not installed. Fall back to the one Yazi
-	-- itself would use, so the file is still previewed and still centered, just
-	-- without whatever the missing previewer would have added to it.
+	-- The configured previewer is not installed. Use the one Yazi itself would
+	-- have used, so the file is still previewed and still centered, just without
+	-- whatever the missing previewer would have added to it. Silently: this is a
+	-- working setup, not a fault to report on every file.
 	local mime = job and job.mime or ""
 	for _, rule in ipairs(BUILTIN) do
 		if mime:find(rule[1]) then

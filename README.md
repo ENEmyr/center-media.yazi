@@ -52,31 +52,30 @@ gap added at the top, which is what centers the two together.
 ## Requirements
 
 - Yazi 26.9.1 or newer
-- Whatever the wrapped previewer needs. The default target,
-  [mediainfo.yazi](https://github.com/boydaihungst/mediainfo.yazi), needs the
-  `mediainfo` CLI and ImageMagick.
+- [mediainfo.yazi](https://github.com/boydaihungst/mediainfo.yazi), recommended.
+  It is the default target, and the reason there is any metadata under the image
+  to center in the first place. It needs the `mediainfo` CLI and ImageMagick.
 
-Nothing else. If the target previewer is not installed, the previewer Yazi
-itself would have used is used instead, following Yazi's own rules (`image`,
-`magick`, `svg`, `video`, `pdf`), and the result is still centered. You get the
-image without the metadata that the target would have drawn under it, and one
-line in the debug log naming what was missing.
+Without it the plugin still works. The previewer Yazi itself would have used is
+used instead, following Yazi's own rules (`image`, `magick`, `svg`, `video`,
+`pdf`), and its image is centered just the same. You get a centered image and
+nothing under it, quietly: there is nothing to configure and nothing to dismiss.
 
 Any image protocol Yazi supports works, including its fallbacks, because the
 geometry is read back from Yazi rather than assumed.
 
 ## Installation
 
-```sh
-ya pkg add ENEmyr/center-media
-```
-
-This plugin wraps a previewer rather than being one, so install the previewer it
-should wrap as well, unless you only want Yazi's built-in preview centered:
+This plugin wraps a previewer rather than being one, so install
+[mediainfo.yazi](https://github.com/boydaihungst/mediainfo.yazi) alongside it:
 
 ```sh
 ya pkg add boydaihungst/mediainfo
+ya pkg add ENEmyr/center-media
 ```
+
+The first line is a recommendation rather than a hard requirement. Skip it if
+all you want is Yazi's own preview, centered.
 
 ## Usage
 
