@@ -8,18 +8,10 @@ This is a wrapper, not a previewer of its own. It delegates to another previewer
 ([mediainfo.yazi](https://github.com/boydaihungst/mediainfo.yazi) by default) and
 repositions what that previewer draws.
 
-```
- before                              after
-
- +------------------------+          +------------------------+
- | ####                   |          |                        |
- | ####                   |          |         ####           |
- | Format: PNG            |          |         ####           |
- | Width: 494 pixels      |          |     Format: PNG        |
- |                        |          |     Width: 494 pixels  |
- |                        |          |                        |
- +------------------------+          +------------------------+
-```
+<p align="center">
+  <img src="assets/preview.png" width="900"
+       alt="Yazi with an image preview: the image sits in the middle of the preview pane, its metadata centered underneath" />
+</p>
 
 ## Why this exists
 
