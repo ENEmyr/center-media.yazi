@@ -1,4 +1,4 @@
---- @since 26.5.6
+--- @since 26.9.1
 
 local M = {}
 
@@ -11,6 +11,32 @@ local image = require(".image")
 local video = require(".video")
 local none_media_preview = require(".none-media-preview")
 
+--- Apply what the keymaps switched on or off to the job's arguments, then pick
+--- the module that previews it: nil when both the image and the metadata are off.
+local function module_for(job)
+	for _, key in ipairs({ "no_metadata", "no_preview" }) do
+		local value = utils.get_state(const.STATE_KEY[key])
+		if value ~= nil then
+			job.args[key] = value
+		end
+	end
+
+	if job.args.no_preview and job.args.no_metadata then
+		return nil
+	elseif job.args.no_preview then
+		return none_media_preview
+	elseif const.seekable_mimes[job.mime] then
+		return adobe
+	elseif job.mime:find("^image/") then
+		return image
+	elseif job.mime:find("^video/") then
+		return video
+	elseif job.mime:find("^audio/") then
+		return audio
+	end
+	return none_media_preview
+end
+
 function M:peek(job)
 	-- debounce peek
 	local start = os.clock()
@@ -21,44 +47,13 @@ function M:peek(job)
 		return
 	end
 
-	local no_metadata_user_cfg = utils.get_state(const.STATE_KEY.no_metadata)
-	if no_metadata_user_cfg ~= nil then
-		job.args.no_metadata = no_metadata_user_cfg
-	end
-
-	local no_preview_user_cfg = utils.get_state(const.STATE_KEY.no_preview)
-	if no_preview_user_cfg ~= nil then
-		job.args.no_preview = no_preview_user_cfg
-	end
-
+	local module = module_for(job)
 	utils.set_states(const.STATE_KEY.cached_job_args, tostring(job.file.url), job.args)
-	if job.args.no_preview and job.args.no_metadata then
-		ya.preview_widget(job, {
-			ui.Clear(job.area),
-		})
+	if not module then
+		ya.preview_widget(job, { ui.Clear(job.area) })
 		return
 	end
-
-	if job.args.no_preview then
-		return none_media_preview:peek(job)
-	end
-
-	local is_video = string.find(job.mime, "^video/")
-	local is_audio = string.find(job.mime, "^audio/")
-	local is_image = string.find(job.mime, "^image/")
-	local is_adobe = const.seekable_mimes[job.mime]
-
-	if is_adobe then
-		return adobe:peek(job)
-	elseif is_image then
-		return image:peek(job)
-	elseif is_video then
-		return video:peek(job)
-	elseif is_audio then
-		return audio:peek(job)
-	else
-		return none_media_preview:peek(job)
-	end
+	return module:peek(job)
 end
 
 function M:seek(job)
@@ -71,145 +66,110 @@ function M:seek(job)
 		})
 	end
 end
+
 function M:preload(job)
-	local cache_img_url = ya.file_cache({ file = job.file, skip = 0 })
-	if not cache_img_url then
-		ya.dbg("mediainfo", "Can't access yazi cache folder")
+	if not ya.file_cache({ file = job.file, skip = 0 }) then
+		ya.dbg("center-media", "Can't access yazi cache folder")
 		return true
 	end
 	if not job.mime then
 		return false
 	end
 
-	local no_metadata_user_cfg = utils.get_state(const.STATE_KEY.no_metadata)
-	if no_metadata_user_cfg ~= nil then
-		job.args.no_metadata = no_metadata_user_cfg
+	local module = module_for(job)
+	if not module then
+		return false
 	end
+	return module:preload(job)
+end
 
-	local no_preview_user_cfg = utils.get_state(const.STATE_KEY.no_preview)
-	if no_preview_user_cfg ~= nil then
-		job.args.no_preview = no_preview_user_cfg
-	end
-
-	if job.args.no_preview and job.args.no_metadata then
-		return false, nil
-	end
-	if job.args.no_preview then
-		return none_media_preview:preload(job)
-	end
-
-	local is_video = string.find(job.mime, "^video/")
-	local is_audio = string.find(job.mime, "^audio/")
-	local is_image = string.find(job.mime, "^image/")
-	local is_adobe = const.seekable_mimes[job.mime]
-
-	if is_adobe then
-		return adobe:preload(job)
-	elseif is_image then
-		return image:preload(job)
-	elseif is_video then
-		return video:preload(job)
-	elseif is_audio then
-		return audio:preload(job)
-	else
-		return none_media_preview:preload(job)
-	end
+local function set_of(list)
+	return type(list) == "table" and utils.tbl_to_set(list) or nil
 end
 
 function M:setup(opts)
-	if not opts or type(opts) ~= "table" then
+	if type(opts) ~= "table" then
 		return
-	end
-
-	if type(opts.skip_labels) == "table" then
-		opts.skip_labels = utils.tbl_to_set(utils.tbl_unique_strings(opts.skip_labels))
-	end
-
-	if type(opts.skip_section_labels) == "table" then
-		opts.skip_section_labels = utils.tbl_to_set(utils.tbl_unique_strings(opts.skip_section_labels))
 	end
 
 	utils.set_state(
 		const.STATE_KEY.skip_labels,
-		type(opts.skip_labels) == "table" and opts.skip_labels
-			or (opts.skip_labels == false and {} or const.skip_labels)
+		opts.skip_labels == false and {} or set_of(opts.skip_labels) or const.skip_labels
 	)
+	utils.set_state(const.STATE_KEY.skip_section_labels, set_of(opts.skip_section_labels) or {})
 
-	utils.set_state(
-		const.STATE_KEY.skip_section_labels,
-		type(opts.skip_section_labels) == "table" and opts.skip_section_labels or {}
-	)
+	-- { audio = { "General", "Audio" } } keeps only those sections for audio
+	-- files; `false` keeps every section of every file.
+	local sections = opts.sections == false and {} or const.sections
+	if type(opts.sections) == "table" then
+		sections = {}
+		for kind, names in pairs(opts.sections) do
+			sections[kind] = set_of(names)
+		end
+	end
+	utils.set_state(const.STATE_KEY.sections, sections)
+end
+
+-- Keymap actions that switch the image or the metadata on or off, in the order
+-- they apply, so that hiding wins over showing when both are asked for.
+local SWITCHES = {
+	{ "show-metadata", "no_metadata", false },
+	{ "show-preview", "no_preview", false },
+	{ "hide-metadata", "no_metadata", true },
+	{ "hide-preview", "no_preview", true },
+}
+
+local TOGGLES = {
+	{ "toggle-metadata", "no_metadata" },
+	{ "toggle-preview", "no_preview" },
+}
+
+--- Whether the keymap asked for `action`, either as the action itself
+--- ("-- toggle-preview") or as a flag ("-- --toggle-preview").
+local function wants(job, action)
+	return job.args[1] == action or job.args[(action:gsub("-", "_"))]
 end
 
 function M:entry(job)
-	local action = job.args[1]
-	if action == const.ENTRY_ACTION.reset or job.args.reset then
+	if wants(job, "reset") then
 		utils.set_state(const.STATE_KEY.no_preview, nil)
 		utils.set_state(const.STATE_KEY.no_metadata, nil)
-		ya.emit("peek", {
-			force = true,
-		})
+		ya.emit("peek", { force = true })
 		return
 	end
 
-	if action == const.ENTRY_ACTION.show_metadata or job.args.show_metadata then
-		utils.set_state(const.STATE_KEY.no_metadata, false)
-		ya.emit("peek", {
-			force = true,
-		})
+	for _, s in ipairs(SWITCHES) do
+		if wants(job, s[1]) then
+			utils.set_state(const.STATE_KEY[s[2]], s[3])
+			ya.emit("peek", { force = true })
+		end
 	end
 
-	if action == const.ENTRY_ACTION.show_preview or job.args.show_preview then
-		utils.set_state(const.STATE_KEY.no_preview, false)
-		ya.emit("peek", {
-			force = true,
-		})
+	if not (wants(job, "toggle-metadata") or wants(job, "toggle-preview")) then
+		return
 	end
 
-	if action == const.ENTRY_ACTION.hide_metadata or job.args.hide_metadata then
-		utils.set_state(const.STATE_KEY.no_metadata, true)
-		ya.emit("peek", {
-			force = true,
-		})
+	-- A toggle flips what the current preview shows, which its peek recorded.
+	-- Right after moving to another file that peek may still be running.
+	local args
+	for _ = 0, 5 do
+		local file = utils.current_file()
+		args = file and utils.get_states(const.STATE_KEY.cached_job_args, file)
+		if args then
+			break
+		end
+		ya.sleep(0.1)
 	end
-	if action == const.ENTRY_ACTION.hide_preview or job.args.hide_preview then
-		utils.set_state(const.STATE_KEY.no_preview, true)
-		ya.emit("peek", {
-			force = true,
-		})
-	end
-
-	job.retry = job.retry or 0
-	if job.retry > 5 then
+	if not args then
 		utils.error("Preview data is loading, try again later")
 		return
 	end
 
-	local current_file = utils.current_file()
-	if not current_file then
-		ya.sleep(0.1)
-		job.retry = job.retry + 1
-		return self:entry(job)
-	end
-
-	local job_args = utils.get_states(const.STATE_KEY.cached_job_args, current_file)
-	if not job_args then
-		ya.sleep(0.1)
-		job.retry = job.retry + 1
-		return self:entry(job)
-	end
-
-	if action == const.ENTRY_ACTION.toggle_metadata or job.args.toggle_metadata then
-		utils.set_state(const.STATE_KEY.no_metadata, not job_args.no_metadata)
-		ya.emit("peek", {
-			force = true,
-		})
-	end
-	if action == const.ENTRY_ACTION.toggle_preview or job.args.toggle_preview then
-		utils.set_state(const.STATE_KEY.no_preview, not job_args.no_preview)
-		ya.emit("peek", {
-			force = true,
-		})
+	for _, t in ipairs(TOGGLES) do
+		if wants(job, t[1]) then
+			utils.set_state(const.STATE_KEY[t[2]], not args[t[2]])
+			ya.emit("peek", { force = true })
+		end
 	end
 end
 

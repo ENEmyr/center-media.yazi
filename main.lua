@@ -5,6 +5,10 @@
 --- horizontally, the image and its metadata as one block vertically, and the
 --- metadata block horizontally.
 ---
+--- The previewer it centers by default is bundled in mediainfo.lua and the
+--- modules next to it, derived from the no longer maintained mediainfo.yazi.
+--- Any other previewer can be named as the target instead.
+---
 --- Yazi anchors `ya.image_show()` to the top-left corner of the rect it is
 --- handed and has no alignment option (sxyazi/yazi#1141), so the only way to
 --- center an image is to know its rendered size in cells before drawing it.
@@ -23,8 +27,13 @@
 
 local M = {}
 
+local mediainfo = require(".mediainfo")
+
+-- The target name that stands for the bundled previewer rather than a plugin.
+local BUNDLED = "mediainfo"
+
 local DEFAULTS = {
-	target = "mediainfo", -- previewer to wrap; a previewer argument overrides it
+	target = BUNDLED, -- previewer to wrap; a previewer argument overrides it
 	horizontal = true, -- center the image left to right
 	vertical = true, -- center image and metadata together, top to bottom
 	text = "block", -- "block" centers the metadata block, "center" centers each line, "off" leaves it alone
@@ -53,6 +62,16 @@ local set_cell = ya.sync(function(state, cell)
 	state.cell = cell
 end)
 
+-- Whether the mediainfo CLI can be started, or nil until a peek or preload has
+-- checked, which happens once per session.
+local get_found = ya.sync(function(state)
+	return state.mediainfo_found
+end)
+
+local set_found = ya.sync(function(state, found)
+	state.mediainfo_found = found
+end)
+
 -- `active` is true only while this plugin's peek is running, which keeps the
 -- patched globals away from every other previewer. `current` additionally pins
 -- metadata centering to the file being previewed. Both are overwritten by each
@@ -60,6 +79,7 @@ end)
 local active, current = false, {}
 local opts, cell = nil, nil
 local widths = setmetatable({}, { __mode = "k" })
+local heights = setmetatable({}, { __mode = "k" })
 local patched = false
 
 local function line_width(l)
@@ -81,6 +101,14 @@ local function block_width(lines)
 		end
 	end
 	return max > 0 and max or nil
+end
+
+--- Rows the lines take up: a string counts its line breaks, a table its Lines.
+local function block_height(lines)
+	if type(lines) == "string" then
+		return select(2, lines:gsub("\n", "")) + 1
+	end
+	return type(lines) == "table" and #lines or nil
 end
 
 --- Size in cells `url` will take up once Yazi has fit it into `rect`. Mirrors
@@ -124,10 +152,9 @@ local function patch()
 
 	ui.Text = function(lines)
 		local w = (active and opts.text == "block") and block_width(lines) or nil
+		local h = (active and opts.vertical) and block_height(lines) or nil
 		local t = text(lines)
-		if w then
-			widths[t] = w
-		end
+		widths[t], heights[t] = w, h
 		return t
 	end
 
@@ -191,11 +218,23 @@ local function patch()
 		for _, w in ipairs(widgets) do
 			pcall(function()
 				if opts.text == "center" then
-					return w:align(ui.Align.CENTER)
+					w:align(ui.Align.CENTER)
 				end
-				local bw, area = widths[w], w:area()
-				if bw and area and bw < area.w then
-					w:area(ui.Rect({ x = area.x + (area.w - bw) // 2, y = area.y, w = bw, h = area.h }))
+				local area = w:area()
+				local x, y, width, height = area.x, area.y, area.w, area.h
+				local bw, bh = widths[w], heights[w]
+				if bw and bw < width then
+					x, width = x + (width - bw) // 2, bw
+				end
+				-- Text that starts at the top of the pane has no image above it to
+				-- center it, as when the image is switched off, so it is centered
+				-- top to bottom by itself.
+				if bh and bh < height and y == job.area.y then
+					local dy = (height - bh) // 2
+					y, height = y + dy, height - dy
+				end
+				if x ~= area.x or y ~= area.y then
+					w:area(ui.Rect({ x = x, y = y, w = width, h = height }))
 				end
 			end)
 		end
@@ -215,12 +254,46 @@ local BUILTIN = {
 	{ "^application/pdf", "pdf" },
 }
 
+local function builtin(job)
+	local mime = job and job.mime or ""
+	for _, rule in ipairs(BUILTIN) do
+		if mime:find(rule[1]) then
+			return rule[2]
+		end
+	end
+end
+
+--- Whether the mediainfo CLI is installed. Only `check` callers, which run in
+--- the async context, may start it to find out; the rest take unknown as yes.
+local function mediainfo_found(check)
+	local found = get_found()
+	if found == nil and check then
+		local _, err = Command("mediainfo"):arg({ "--version" }):output()
+		found = err == nil
+		set_found(found)
+	end
+	return found ~= false
+end
+
 local missing = {}
 
-local function target(job)
+--- The previewer to delegate to. Only peek and preload jobs carry a previewer's
+--- arguments, so only they can name a target; Yazi gives seek no arguments, and
+--- for a keymap's entry the first argument is the action, so `positional` is
+--- false there. Both use the configured target.
+local function target(job, positional, check)
 	opts = opts or get_opts()
-	local name = job and job.args and job.args[1]
+	local name = positional and job and job.args and job.args[1]
 	name = type(name) == "string" and name or opts.target
+
+	-- Without the mediainfo CLI the bundled previewer has no metadata to show,
+	-- so the file goes to the previewer Yazi itself would have used, silently,
+	-- as with a missing target below. Audio has none, and keeps the bundled
+	-- previewer for its cover art.
+	if name == BUNDLED then
+		local fallback = not mediainfo_found(check) and builtin(job)
+		return fallback and require(fallback) or mediainfo
+	end
 
 	if not missing[name] then
 		local ok, mod = pcall(require, name)
@@ -234,18 +307,17 @@ local function target(job)
 	-- have used, so the file is still previewed and still centered, just without
 	-- whatever the missing previewer would have added to it. Silently: this is a
 	-- working setup, not a fault to report on every file.
-	local mime = job and job.mime or ""
-	for _, rule in ipairs(BUILTIN) do
-		if mime:find(rule[1]) then
-			return require(rule[2])
-		end
+	local fallback = builtin(job)
+	if fallback then
+		return require(fallback)
 	end
 	error(missing[name])
 end
 
 --- Previewers only have to implement `peek`, so anything else may be missing.
-local function call(method, job)
-	local t = target(job)
+--- `seek` runs in the sync context, where the mediainfo CLI cannot be checked.
+local function call(method, job, positional)
+	local t = target(job, positional, method == "preload")
 	local f = t[method]
 	if type(f) ~= "function" then
 		return
@@ -254,7 +326,7 @@ local function call(method, job)
 end
 
 function M:peek(job)
-	local t = target(job)
+	local t = target(job, true, true)
 	patch()
 	current.url = job and job.file and tostring(job.file.url)
 	active = true
@@ -266,26 +338,27 @@ function M:peek(job)
 end
 
 function M:seek(job)
-	return call("seek", job)
+	return call("seek", job, false)
 end
 
 function M:preload(job)
-	return call("preload", job)
+	return call("preload", job, true)
 end
 
 function M:entry(job)
-	return call("entry", job)
+	return call("entry", job, false)
 end
 
 function M:setup(o)
-	local merged = {}
-	for k, v in pairs(DEFAULTS) do
-		merged[k] = v
+	o = type(o) == "table" and o or {}
+	local own = {}
+	for k in pairs(DEFAULTS) do
+		own[k] = o[k]
 	end
-	for k, v in pairs(type(o) == "table" and o or {}) do
-		merged[k] = v
-	end
-	set_opts(merged)
+	set_opts(own)
+	-- The other options (skip_labels, skip_section_labels, sections) belong to
+	-- the bundled previewer.
+	mediainfo:setup(o)
 end
 
 return M

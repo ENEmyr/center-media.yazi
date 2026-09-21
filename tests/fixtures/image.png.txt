@@ -1,0 +1,23 @@
+General
+Complete name                            : image.png
+Format                                   : PNG
+Format/Info                              : Portable Network Graphic
+File size                                : 5.68 KiB
+date:create                              : 2026-09-21T03:37:04+00:00
+date:modify                              : 2026-09-21T03:37:04+00:00
+date:timestamp                           : 2026-09-21T03:37:04+00:00
+
+Image
+Format                                   : PNG
+Format/Info                              : Portable Network Graphic
+Compression                              : Deflate
+Format settings                          : Linear
+Width                                    : 600 pixels
+Height                                   : 600 pixels
+Display aspect ratio                     : 1.000
+Color space                              : RGB
+Bit depth                                : 16 bits
+Compression mode                         : Lossless
+Stream size                              : 5.54 KiB (97%)
+
+

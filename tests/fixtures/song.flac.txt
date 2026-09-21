@@ -1,0 +1,45 @@
+General
+Complete name                            : song.flac
+Format                                   : FLAC
+Format/Info                              : Free Lossless Audio Codec
+File size                                : 57.6 KiB
+Duration                                 : 3 s 0 ms
+Overall bit rate mode                    : Variable
+Overall bit rate                         : 157 kb/s
+Title                                    : Flac Song
+Writing application                      : Lavf63.1.101
+Cover                                    : Yes
+Cover type                               : Picture
+Cover MIME                               : image/png
+
+Audio
+Format                                   : FLAC
+Format/Info                              : Free Lossless Audio Codec
+Duration                                 : 3 s 0 ms
+Bit rate mode                            : Variable
+Bit rate                                 : 123 kb/s
+Channel(s)                               : 1 channel
+Channel layout                           : M
+Sampling rate                            : 44.1 kHz
+Bit depth                                : 16 bits
+Compression mode                         : Lossless
+Stream size                              : 45.0 KiB (78%)
+Writing library                          : Lavf63.1.101
+MD5 of the unencoded content             : 4C0C7E808E13300A43183F63F1FDE0A0
+
+Image
+Type                                     : Picture
+Format                                   : PNG
+Format/Info                              : Portable Network Graphic
+Compression                              : Deflate
+Format settings                          : Linear
+Muxing mode                              : FLAC Picture
+Width                                    : 600 pixels
+Height                                   : 600 pixels
+Display aspect ratio                     : 1.000
+Color space                              : RGB
+Bit depth                                : 16 bits
+Compression mode                         : Lossless
+Stream size                              : 4.45 KiB (8%)
+
+

@@ -10,19 +10,17 @@ M.skip_labels = {
 	["MD5 of the unencoded content"] = true,
 }
 
-M.ENTRY_ACTION = {
-	toggle_metadata = "toggle-metadata",
-	toggle_preview = "toggle-preview",
-	hide_metadata = "hide-metadata",
-	hide_preview = "hide-preview",
-	show_metadata = "show-metadata",
-	show_preview = "show-preview",
-	reset = "reset",
+-- The sections of the mediainfo output to keep, by the file's MIME top-level
+-- type. A type that is not listed keeps every section. Audio drops the Image
+-- section that describes its cover art, which is on screen right above it.
+M.sections = {
+	audio = { General = true, Audio = true },
 }
 
 M.STATE_KEY = {
 	skip_labels = "skip_labels",
 	skip_section_labels = "skip_section_labels",
+	sections = "sections",
 	units = "units",
 	no_metadata = "no_metadata",
 	no_preview = "no_preview",
@@ -31,6 +29,8 @@ M.STATE_KEY = {
 	last_valid_mediainfo_skip = "last_valid_mediainfo_skip",
 	cached_mediainfo = "cached_mediainfo",
 	cached_job_args = "cached_job_args",
+	-- Embedded pictures of an audio file, or layers of an Adobe file, by cache path
+	layers = "layers",
 }
 
 M.magick_image_mimes = {
@@ -61,6 +61,5 @@ M.seekable_mimes = {
 }
 
 M.suffix = "_mediainfo"
-M.SHELL = os.getenv("SHELL") or ""
 
 return M
