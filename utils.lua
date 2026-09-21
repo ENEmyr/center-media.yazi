@@ -7,28 +7,34 @@ function M.is_valid_utf8(str)
 	return utf8.len(str) ~= nil
 end
 
-function M.utf8_sub(str, start_char, end_char)
-	local start_byte = utf8.offset(str, start_char) -- Expects start_char to be a character index
-	local end_byte = end_char and (utf8.offset(str, end_char + 1) or (#str + 1)) - 1 -- Expects end_char
+--- The characters of `str` from the `start_char`th to the `end_char`th, or to
+--- the end when `end_char` is nil.
+local function utf8_sub(str, start_char, end_char)
+	local start_byte = utf8.offset(str, start_char)
+	local end_byte = end_char and (utf8.offset(str, end_char + 1) or (#str + 1)) - 1
 	if not start_byte then
 		return ""
 	end
 	return str:sub(start_byte, end_byte)
 end
+
 --- The file on disk, for the tools that are run on it.
 function M.path(job)
 	return job.file.path or job.file.cache or job.file.url.path or job.file.url
 end
 
-function M.is_literal_string(str)
-	return str and str:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+--- The cache Yazi keeps for the file itself, at skip 0, or nil for a file it
+--- keeps none for. Its path is the key of the session caches and, with
+--- const.suffix, the name of the metadata cache file.
+function M.cache(job)
+	return ya.file_cache({ file = job.file, skip = 0 })
 end
-function M.path_quote(path)
+
+local function path_quote(path)
 	if not path or tostring(path) == "" then
 		return path
 	end
-	local result = "'" .. string.gsub(tostring(path), "'", "'\\''") .. "'"
-	return result
+	return "'" .. string.gsub(tostring(path), "'", "'\\''") .. "'"
 end
 
 M.force_render = ya.sync(function(_, _)
@@ -71,11 +77,8 @@ function M.read_mediainfo_cached_file(file_path)
 	if cached then
 		return cached
 	end
-	-- Open the file in read mode
 	local file = io.open(file_path, "r")
-
 	if file then
-		-- Read the entire file content
 		local content = file:read("*all")
 		file:close()
 		-- An error is not kept, so the reload peek asks for after one reads
@@ -91,8 +94,7 @@ end
 --- after `err_msg`, the errors from making the preview image, if there were any.
 --- An existing cache file is kept unless peek asked for a reload.
 function M.cache_mediainfo(job, err_msg)
-	local cache_mediainfo_url = Url(tostring(ya.file_cache({ file = job.file, skip = 0 })) .. const.suffix)
-	-- Case peek function called preload to refetch mediainfo
+	local cache_mediainfo_url = Url(tostring(M.cache(job)) .. const.suffix)
 	if fs.cha(cache_mediainfo_url) and not job.args.force_reload_mediainfo then
 		return true, err_msg ~= "" and Err("Error: " .. err_msg) or nil
 	end
@@ -104,7 +106,7 @@ function M.cache_mediainfo(job, err_msg)
 	else
 		-- Reach a file whose path is not valid UTF-8 by name from its directory.
 		-- The "./" keeps a name that starts with "-" from being read as an option.
-		local script = "cd " .. M.path_quote(tostring(path.parent)) .. " && mediainfo " .. M.path_quote("./" .. tostring(path.name))
+		local script = "cd " .. path_quote(tostring(path.parent)) .. " && mediainfo " .. path_quote("./" .. tostring(path.name))
 		output, err = Command("sh"):arg({ "-c", script }):output()
 	end
 	if err then
@@ -116,6 +118,23 @@ function M.cache_mediainfo(job, err_msg)
 		cache_mediainfo_url,
 		(err_msg ~= "" and ("Error: " .. err_msg) or "") .. (output and output.stdout or "")
 	)
+end
+
+--- Run magick with `args` and put the PNG it draws at `cache`. It draws into a
+--- file next to the cache first and renames it once it is done, so that a run
+--- that fails leaves no half-written cache. Returns what magick's status does.
+function M.magick(cache, args)
+	local tmp = Url(cache .. ".tmp")
+	if fs.cha(tmp) then
+		fs.remove("file", tmp)
+	end
+	local file = type(fs.unique) == "function" and fs.unique("file", tmp) or fs.unique_name(tmp)
+	args[#args + 1] = string.format("PNG32:%s", tostring(file))
+	local ok, err = require("magick").with_limit():arg(args):status()
+	if ok then
+		os.rename(tostring(file), tostring(cache))
+	end
+	return ok, err
 end
 
 --- The stream a line of mediainfo output starts, if it starts one. mediainfo
@@ -245,10 +264,10 @@ function M.metadata_lines(job, output, skip)
 				local head = math.max(0, math.min(label_len - pos + 1, len))
 				local spans = {}
 				if head > 0 then
-					spans[#spans + 1] = ui.Span(M.utf8_sub(piece, 1, head)):style(label_style)
+					spans[#spans + 1] = ui.Span(utf8_sub(piece, 1, head)):style(label_style)
 				end
 				if head < len or not label then
-					spans[#spans + 1] = ui.Span(M.utf8_sub(piece, head + 1)):style(
+					spans[#spans + 1] = ui.Span(utf8_sub(piece, head + 1)):style(
 						label and (th.spot.tbl_col or ui.Style():fg("blue")) or (th.spot.title or ui.Style():fg("green"))
 					)
 				end
@@ -295,6 +314,15 @@ local function blank(image)
 	return info ~= nil and info.w == 1 and info.h == 1
 end
 
+--- What the next peek needs to clear the metadata this one drew: `rect`, and
+--- the pane it was drawn in, since it is only cleared while the pane is the same.
+local function drawn_area(rect, pane)
+	return {
+		x = rect.x, y = rect.y, w = rect.w, h = rect.h,
+		win_x = pane.x, win_y = pane.y, win_w = pane.w, win_h = pane.h,
+	}
+end
+
 --- The metadata rows to draw in `rows` rows, and how many rows that takes.
 --- When not all fit, because some are below the area or past what
 --- metadata_lines read (`eof` false), the last row becomes a centered
@@ -327,7 +355,7 @@ function M.peek(module, job, image, more)
 		return uncached(preload_err)
 	end
 
-	local key = tostring(ya.file_cache({ file = job.file, skip = 0 }))
+	local key = tostring(M.cache(job))
 	local lines, height, eof, width = {}, 0, true, nil
 	if not job.args.no_metadata then
 		local output = M.read_mediainfo_cached_file(key .. const.suffix)
@@ -377,10 +405,7 @@ function M.peek(module, job, image, more)
 	if not image then
 		M.force_render()
 		ya.preview_widget(job, { ui.Clear(area), text(fit(lines, area.h, eof, 0), area, width) })
-		M.set_state(const.STATE_KEY.prev_metadata_area, {
-			x = area.x, y = area.y, w = area.w, h = area.h,
-			win_x = area.x, win_y = area.y, win_w = area.w, win_h = area.h,
-		})
+		M.set_state(const.STATE_KEY.prev_metadata_area, drawn_area(area, area))
 		return
 	end
 
@@ -417,10 +442,7 @@ function M.peek(module, job, image, more)
 	local below = ui.Rect({ x = area.x, y = area.y + room.h, w = area.w, h = area.h - room.h })
 	local fitted, rows = fit(lines, below.h, eof, room.margin)
 	ya.preview_widget(job, { text(fitted, ui.Rect({ x = below.x, y = below.y, w = below.w, h = rows }), width) })
-	M.set_state(const.STATE_KEY.prev_metadata_area, not job.args.no_metadata and {
-		x = below.x, y = below.y, w = below.w, h = below.h,
-		win_x = area.x, win_y = area.y, win_w = area.w, win_h = area.h,
-	} or nil)
+	M.set_state(const.STATE_KEY.prev_metadata_area, not job.args.no_metadata and drawn_area(below, area) or nil)
 end
 
 M.current_file = ya.sync(function()
@@ -430,15 +452,5 @@ M.current_file = ya.sync(function()
 	end
 	return tostring(h.url)
 end)
-
-function M.tbl_to_set(t1)
-	local set = {}
-
-	for _, v in ipairs(t1) do
-		set[v] = true
-	end
-
-	return set
-end
 
 return M

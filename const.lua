@@ -43,7 +43,6 @@ M.magick_image_mimes = {
 	jxl = true,
 	tiff = true,
 	xml = true,
-	-- ["svg+xml"] = true,
 	["canon-cr2"] = true,
 }
 

@@ -5,7 +5,7 @@ local const = require(".const")
 local utils = require(".utils")
 
 local function image_layer_count(job)
-	local cache = ya.file_cache({ file = job.file, skip = 0 })
+	local cache = utils.cache(job)
 	if not cache then
 		return 0
 	end
@@ -13,9 +13,7 @@ local function image_layer_count(job)
 	if layer_count then
 		return layer_count
 	end
-	local output, err = Command("identify")
-		:arg({ tostring(utils.path(job)) })
-		:output()
+	local output, err = Command("identify"):arg({ tostring(utils.path(job)) }):output()
 	if err or not output then
 		return 0
 	end
@@ -38,54 +36,33 @@ function M:peek(job)
 end
 
 function M:preload(job)
-	local err_msg = ""
-
-	-- NOTE: Preload image
-
 	local cache_img_url = ya.file_cache(job)
 	local cache_img_url_cha = cache_img_url and fs.cha(cache_img_url)
 
-	-- NOTE: Only generate preview image when cache image is not exist
+	local err_msg = ""
 	if not cache_img_url_cha or cache_img_url_cha.len <= 0 then
-		local cache_img_status, image_preload_err
+		-- The layer the scroll position is on, or the last one past them.
 		local layer_index = utils.step(job)
 		if layer_index > 0 then
 			layer_index = math.min(layer_index, math.max(0, image_layer_count(job) - 1))
 		end
-		local cache_img_url_tmp = Url(cache_img_url .. ".tmp")
-		if fs.cha(cache_img_url_tmp) then
-			fs.remove("file", cache_img_url_tmp)
-		end
-		local tmp_file_path, _ = type(fs.unique) == "function" and fs.unique("file", cache_img_url_tmp)
-			or fs.unique_name(cache_img_url_tmp)
-		cache_img_status, image_preload_err = require("magick")
-			.with_limit()
-			:arg({
-				"-background",
-				"none",
-				tostring(utils.path(job)) .. "[" .. tostring(
-					layer_index
-				) .. "]",
-				"-auto-orient",
-				"-strip",
-				"-resize",
-				string.format("%dx%d>", rt.preview.max_width, rt.preview.max_height),
-				"-quality",
-				rt.preview.image_quality,
-				string.format("PNG32:%s", tostring(tmp_file_path)),
-			})
-			:status()
-		if cache_img_status then
-			os.rename(tostring(tmp_file_path), tostring(cache_img_url))
-		end
-
-		if not cache_img_status and image_preload_err then
-			ya.dbg("center-media", image_preload_err)
-			err_msg = err_msg .. (image_preload_err and (tostring(image_preload_err)) or "")
+		local ok, err = utils.magick(cache_img_url, {
+			"-background",
+			"none",
+			tostring(utils.path(job)) .. "[" .. layer_index .. "]",
+			"-auto-orient",
+			"-strip",
+			"-resize",
+			string.format("%dx%d>", rt.preview.max_width, rt.preview.max_height),
+			"-quality",
+			rt.preview.image_quality,
+		})
+		if not ok and err then
+			ya.dbg("center-media", err)
+			err_msg = tostring(err)
 		end
 	end
 
-	-- NOTE: Get mediainfo and save to cache folder
 	return utils.cache_mediainfo(job, err_msg)
 end
 

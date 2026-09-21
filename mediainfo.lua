@@ -44,7 +44,7 @@ function M:peek(job)
 
 	-- The mime picks the module. Without Yazi's cache, which it keeps for no
 	-- file in its own cache directory, there is nothing to draw with.
-	if not job.mime or not ya.file_cache({ file = job.file, skip = 0 }) then
+	if not job.mime or not utils.cache(job) then
 		return
 	end
 
@@ -69,7 +69,7 @@ function M:seek(job)
 end
 
 function M:preload(job)
-	if not ya.file_cache({ file = job.file, skip = 0 }) then
+	if not utils.cache(job) then
 		ya.dbg("center-media", "Can't access yazi cache folder")
 		return true
 	end
@@ -86,8 +86,16 @@ function M:preload(job)
 	return module:preload(job)
 end
 
+--- The list as a set, or nil for anything but a table.
 local function set_of(list)
-	return type(list) == "table" and utils.tbl_to_set(list) or nil
+	if type(list) ~= "table" then
+		return nil
+	end
+	local set = {}
+	for _, v in ipairs(list) do
+		set[v] = true
+	end
+	return set
 end
 
 function M:setup(opts)

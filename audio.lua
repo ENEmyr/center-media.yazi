@@ -5,12 +5,12 @@ local const = require(".const")
 local utils = require(".utils")
 
 local function get_cover_layers(job)
-	local cache = ya.file_cache({ file = job.file, skip = 0 })
+	local cache = utils.cache(job)
 	if not cache then
 		return {}
 	end
 	local covers = utils.get_states(const.STATE_KEY.layers, tostring(cache))
-	if covers and type(covers) == "table" then
+	if type(covers) == "table" then
 		return covers
 	end
 	local output, err = Command("ffprobe"):arg({
@@ -46,6 +46,15 @@ local function cover_index(job)
 	return utils.step(job) + 1
 end
 
+--- The line shown for `tool` failing to start, or complaining on stderr.
+local function failed(tool, output, err)
+	return string.format(
+		"Failed to start `%s`.\n Error: %s\n",
+		tool,
+		tostring(err or (output and output.stderr or ""))
+	)
+end
+
 function M:peek(job)
 	-- Scrolling steps through the embedded pictures, past the end of the
 	-- metadata too while there are more.
@@ -55,14 +64,10 @@ function M:peek(job)
 end
 
 function M:preload(job)
-	local err_msg = ""
-
-	-- NOTE: Preload image
-
 	local cache_img_url = ya.file_cache(job)
 	local cache_img_url_cha = cache_img_url and fs.cha(cache_img_url)
 
-	-- NOTE: Only generate preview image when cache image is not exist
+	local err_msg = ""
 	if cache_img_url and (not cache_img_url_cha or cache_img_url_cha.len <= 0) then
 		-- The cover the scroll position is on, or the last one past them. ffprobe
 		-- reports streams by their index in the file, which "0:N" picks; without
@@ -71,7 +76,7 @@ function M:preload(job)
 		local position = utils.get_state(const.STATE_KEY.units) and cover_index(job) or 1
 		local stream = covers[math.min(position, #covers)]
 		local qv = 31 - math.floor(rt.preview.image_quality * 0.3)
-		local audio_preload_output, audio_preload_err = Command("ffmpeg"):arg({
+		local output, err = Command("ffmpeg"):arg({
 			"-v",
 			"error",
 			"-threads",
@@ -94,27 +99,17 @@ function M:preload(job)
 			"-y",
 			tostring(cache_img_url),
 		}):output()
-		-- NOTE: Some audio types doesn't have cover image -> error ""
-		if audio_preload_err then
-			ya.dbg("center-media", audio_preload_err)
-			err_msg = err_msg
-				.. string.format(
-					"Failed to start `%s`.\n Error: %s\n",
-					"ffmpeg",
-					tostring(audio_preload_err or (audio_preload_output and audio_preload_output.stderr or ""))
-				)
-		elseif
-			audio_preload_output
-			and type(audio_preload_output.stderr) == "string"
-			and audio_preload_output.stderr:find("does not contain any stream")
-		then
-			ya.dbg("center-media", audio_preload_output and audio_preload_output.stderr)
-			cache_img_url_cha = fs.cha(cache_img_url)
-			if cache_img_url_cha then
+		if err then
+			ya.dbg("center-media", err)
+			err_msg = err_msg .. failed("ffmpeg", output, err)
+		elseif output and type(output.stderr) == "string" and output.stderr:find("does not contain any stream") then
+			-- Audio without cover art. A blank image is cached in its place, so
+			-- that the cover is not looked for again; utils.peek skips drawing it.
+			ya.dbg("center-media", output.stderr)
+			if fs.cha(cache_img_url) then
 				fs.remove("file", Url(cache_img_url))
 			end
-			-- NOTE: Workaround case audio has no cover image. Prevent regenerate preview image
-			audio_preload_output, audio_preload_err = require("magick")
+			output, err = require("magick")
 				.with_limit()
 				:arg({
 					"-size",
@@ -123,22 +118,13 @@ function M:preload(job)
 					string.format("PNG32:%s", cache_img_url),
 				})
 				:output()
-			if
-				(audio_preload_output and audio_preload_output.stderr ~= nil and audio_preload_output.stderr ~= "")
-				or audio_preload_err
-			then
-				ya.dbg("center-media", audio_preload_err or (audio_preload_output and audio_preload_output.stderr))
-				err_msg = err_msg
-					.. string.format(
-						"Failed to start `%s`.\n Error: %s\n",
-						"magick",
-						tostring(audio_preload_err or (audio_preload_output and audio_preload_output.stderr or ""))
-					)
+			if (output and output.stderr ~= nil and output.stderr ~= "") or err then
+				ya.dbg("center-media", err or (output and output.stderr))
+				err_msg = err_msg .. failed("magick", output, err)
 			end
 		end
 	end
 
-	-- NOTE: Get mediainfo and save to cache folder
 	return utils.cache_mediainfo(job, err_msg)
 end
 

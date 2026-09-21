@@ -188,11 +188,12 @@ local function patch()
 			return ui.Rect({ x = rect.x + x, y = rect.y + y, w = rect.w - x, h = rect.h - y })
 		end
 
-		local drawn, err = show(url, at(dx, dy))
+		local placed = at(dx, dy)
+		local drawn, err = show(url, placed)
 		if not drawn then
 			return drawn, err
 		end
-		local learned = learn(info, at(dx, dy), drawn)
+		local learned = learn(info, placed, drawn)
 
 		-- Check the prediction, and redraw once if it was off by more than a cell.
 		local wx = opts.horizontal and math.max(0, (rect.w - drawn.w) // 2) or 0
