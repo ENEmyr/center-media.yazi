@@ -20,12 +20,16 @@ rt = { preview = { tab_size = 2, wrap = "no" } }
 th = { spot = {} }
 ui = {
 	Wrap = { YES = 1 },
+	Align = { CENTER = "center" },
 	Style = function()
 		local s = {}
 		function s:fg()
 			return s
 		end
 		function s:bold()
+			return s
+		end
+		function s:dim()
 			return s
 		end
 		return s
@@ -37,14 +41,26 @@ ui = {
 	end,
 	Line = function(spans)
 		local t = {}
-		for _, span in ipairs(spans) do
+		for _, span in ipairs(type(spans) == "table" and spans or { { s = spans } }) do
 			t[#t + 1] = span.s
 		end
-		return { text = table.concat(t) }
+		return {
+			text = table.concat(t),
+			width = function(self)
+				return utf8.len(self.text)
+			end,
+			align = function(self, align)
+				self.alignment = align
+				return self
+			end,
+		}
+	end,
+	width = function(s)
+		return utf8.len(s)
 	end,
 	-- Wraps by character count, which is what ui.lines does for ASCII text.
 	lines = function(line, opt)
-		local width = opt.wrap == "yes" and opt.width or math.huge
+		local width = (opt.wrap == "yes" or opt.wrap == ui.Wrap.YES) and opt.width or math.huge
 		local rows, n, i = {}, utf8.len(line), 1
 		repeat
 			local len = math.min(width, n - i + 1)
@@ -191,6 +207,18 @@ rt.preview.wrap = "yes"
 check("narrow pane wraps long lines", #render(fixture("song.mp3"), "audio/mpeg", { w = 12 }) > #full)
 rt.preview.wrap = "no"
 
+-- A line wider than the pane gets the width of the widest line that fits.
+local long = "General\nFormat                                   : MPEG-4\n"
+	.. "Encoding settings                        : cabac=1 / ref=1 / deblock=1:0:0 / analyse=0x3:0x113\n"
+local cut = render(long, "video/mp4", { w = 40 })
+check("a line wider than the pane is cut to the widest line and ends in an ellipsis",
+	#cut == 3 and cut[3] == "Encoding sett…" and utf8.len(cut[3]) == utf8.len(cut[2]))
+rt.preview.wrap = "yes"
+local wrapped = render(long, "video/mp4", { w = 40 })
+check("with wrapping on, it wraps near the widest line instead of at the pane",
+	#wrapped > 3 and not wrapped[3]:find("…") and utf8.len(wrapped[3]) < 20)
+rt.preview.wrap = "no"
+
 -- The session caches.
 state = {}
 for i = 1, 25 do
@@ -240,9 +268,13 @@ ui.render = function() end
 ui.Clear = function()
 	return { clear = true }
 end
+ui.Rect = function(r)
+	return r
+end
 ui.Text = function(lines)
 	local t = { lines = lines }
-	function t:area()
+	function t:area(rect)
+		t.rect = rect
 		return t
 	end
 	function t:wrap()
@@ -253,10 +285,16 @@ end
 local module = { preload = function()
 	return true
 end }
-local function peek(skip, more, image)
+-- Returns the metadata rows peek drew and the area it drew them in.
+local function peek(skip, more, image, rows)
 	state, drawn, emitted = { [const.STATE_KEY.units] = 5 }, nil, nil
-	utils.peek(module, { skip = skip, mime = "audio/mpeg", args = {}, file = { url = "song.mp3" }, area = { x = 0, y = 0, w = 80, h = 10 } }, image, more)
-	return drawn and drawn[2].lines or {}
+	local area = { x = 0, y = 0, w = 80, h = rows or 10 }
+	utils.peek(module, { skip = skip, mime = "audio/mpeg", args = {}, file = { url = "song.mp3" }, area = area }, image, more)
+	local text = drawn and drawn[#drawn]
+	return text and text.lines or {}, text and text.rect
+end
+local function last(lines)
+	return lines[#lines] and lines[#lines].text
 end
 check("peek shows the metadata", peek(0)[1] and peek(0)[1].text == "General")
 check("peek past the end with nothing more scrolls back", #peek(200) == 0 and emitted and emitted.args[1] == 195)
@@ -273,6 +311,21 @@ ya.image_show = function()
 end
 local lines = peek(0, nil, "blank.png")
 check("peek draws no image for the blank cover, only the metadata", lines[1] and lines[1].text == "General" and not shown)
+lines = peek(0)
+check("metadata that does not fit ends in an ellipsis", #lines == 10 and last(lines) == "…")
+check("the ellipsis is centered", lines[#lines].alignment == ui.Align.CENTER)
+lines = peek(0, nil, nil, 100)
+check("metadata that fits has no ellipsis", #lines > 10 and last(lines) ~= "…")
+fs = { cha = function()
+	return {}
+end }
+-- An image 3 rows tall, moved 2 rows down by the centering.
+ya.image_show = function()
+	return { h = 5 }, nil, 2
+end
+local rect
+lines, rect = peek(0, nil, "cover.jpg")
+check("metadata under an image leaves as much room below it as the image above", rect.h == 3 and #lines == 3 and last(lines) == "…")
 os.remove(cache .. const.suffix)
 os.remove(cache)
 

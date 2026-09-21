@@ -39,5 +39,7 @@ EOF
 ffmpeg -v error -y -f lavfi -i "sine=frequency=440:duration=2" -i image.png \
 	-map 0:a -map 1:v -c:a libmp3lame -c:v mjpeg -id3v2_version 3 -disposition:v attached_pic song.mp3
 ffmpeg -v error -y -f lavfi -i "sine=frequency=440:duration=2" plain.wav
-ffmpeg -v error -y -loop 1 -i image.png -vf scale=480:270 -t 2 -r 25 -c:v mpeg4 video.mp4
+# libx264 writes an "Encoding settings" line wider than the pane, as most videos
+# have, which must not keep the metadata from being centered.
+ffmpeg -v error -y -loop 1 -i image.png -vf scale=480:270 -t 2 -r 25 -c:v libx264 -pix_fmt yuv420p video.mp4
 printf '1\n00:00:00,000 --> 00:00:01,000\nHello\n' >sub.srt

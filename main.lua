@@ -200,8 +200,10 @@ local function patch()
 		-- Report the image as if it had started at the top of the rect, so the
 		-- caller lays its metadata out directly below the shifted image. The gap
 		-- that leaves at the bottom equals the gap added at the top, which is
-		-- what centers the image and the metadata together.
-		return ui.Rect({ x = rect.x, y = rect.y, w = rect.w, h = dy + drawn.h }), err
+		-- what centers the image and the metadata together. The gap added at the
+		-- top comes third, for the bundled previewer to leave as much room under
+		-- metadata that does not fit.
+		return ui.Rect({ x = rect.x, y = rect.y, w = rect.w, h = dy + drawn.h }), err, dy
 	end
 
 	ya.preview_widget = function(job, widgets)

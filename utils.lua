@@ -125,6 +125,30 @@ local function section_of(str)
 	return str:match("^(%a+) #%d+$") or str:match("^%a+$")
 end
 
+--- Whether the preview wraps long lines, as Yazi's preview.wrap setting says.
+local function wraps()
+	return rt.preview.wrap == "yes" or rt.preview.wrap == ui.Wrap.YES
+end
+
+--- The dim ellipsis that marks metadata cut short, down or to the right.
+local function ellipsis()
+	return ui.Span("…"):style(ui.Style():dim())
+end
+
+--- The start of `s` that takes at most `width` columns on screen.
+local function clip(s, width)
+	local out, used = {}, 0
+	for _, code in utf8.codes(s) do
+		local char = utf8.char(code)
+		used = used + ui.width(char)
+		if used > width then
+			break
+		end
+		out[#out + 1] = char
+	end
+	return table.concat(out)
+end
+
 --- Turn cached mediainfo output into the lines of the metadata block, starting
 --- `skip` lines in and stopping once the preview area is full.
 --- Returns the lines, how many lines were walked through including skipped ones
@@ -159,13 +183,30 @@ function M.metadata_lines(job, output, skip)
 		entries[#entries] = nil
 	end
 
+	-- A line wider than the pane would make the block as wide as the pane, which
+	-- leaves it where it is instead of centering it. Such a line gets the width
+	-- of the widest line that fits: it wraps there when the preview wraps, and
+	-- is cut there and ended with an ellipsis when it does not.
+	local width = 0
+	for _, entry in ipairs(entries) do
+		entry.width = ui.Line(entry.line):width()
+		if entry.width <= job.area.w and entry.width > width then
+			width = entry.width
+		end
+	end
+	width = width > 0 and width or math.max(1, job.area.w)
+
 	local lines = {}
 	local limit = job.area.h
 	local last_line = 0
 	local EOF_mediainfo = true
-	local opt = { ansi = true, tab_size = rt.preview.tab_size, wrap = rt.preview.wrap, width = math.max(1, job.area.w) }
+	local opt = { ansi = true, tab_size = rt.preview.tab_size, wrap = rt.preview.wrap, width = width }
 	for i, entry in ipairs(entries) do
 		local label, line = entry.label, entry.line
+		local long = entry.width > width and not wraps()
+		if long then
+			line = clip(line, width - 1)
+		end
 		local wrapped = ui.lines(line, opt)
 		local line_height = #wrapped
 		local from = 1
@@ -200,6 +241,9 @@ function M.metadata_lines(job, output, skip)
 						)
 					)
 				end
+				if long then
+					table.insert(current_line_components, ellipsis())
+				end
 				table.insert(lines, ui.Line(current_line_components))
 			else
 				total_label_rendered_len = total_label_rendered_len + total_rendered_text_len
@@ -225,8 +269,7 @@ function M.step(job)
 end
 
 local function text(lines, area)
-	local wrap = rt.preview.wrap == "yes" or rt.preview.wrap == ui.Wrap.YES
-	return ui.Text(lines):area(area):wrap(wrap and ui.Wrap.YES or ui.Wrap.NO)
+	return ui.Text(lines):area(area):wrap(wraps() and ui.Wrap.YES or ui.Wrap.NO)
 end
 
 --- Whether `image` is the blank 1x1 picture audio.lua caches in place of
@@ -235,6 +278,23 @@ end
 local function blank(image)
 	local info = ya.image_info(image)
 	return info ~= nil and info.w == 1 and info.h == 1
+end
+
+--- The metadata rows to draw in `rows` rows, and how many rows that takes.
+--- When not all fit, because some are below the area or past what
+--- metadata_lines read (`eof` false), the last row becomes a centered
+--- ellipsis, a hint that scrolling shows more, and `margin` rows stay free
+--- under it: as many as the image has above it.
+local function fit(lines, rows, eof, margin)
+	if eof and #lines <= rows then
+		return lines, rows
+	end
+	rows = math.max(0, rows - margin)
+	local fitted = { table.unpack(lines, 1, rows - 1) }
+	if rows > 0 then
+		fitted[rows] = ui.Line({ ellipsis() }):align(ui.Align.CENTER)
+	end
+	return fitted, rows
 end
 
 --- The peek every media module shares: the preview image at the top, if the
@@ -249,7 +309,7 @@ function M.peek(module, job, image, more)
 	end
 
 	local key = tostring(ya.file_cache({ file = job.file, skip = 0 }))
-	local lines, height = {}, 0
+	local lines, height, eof = {}, 0, true
 	if not job.args.no_metadata then
 		local output = M.read_mediainfo_cached_file(key .. const.suffix)
 		if output and output:match("^Error:") then
@@ -262,7 +322,7 @@ function M.peek(module, job, image, more)
 		end
 		if output then
 			local skip = job.skip
-			local last_line, eof
+			local last_line
 			lines, last_line, eof = M.metadata_lines(job, output, skip)
 			if eof and #lines == 0 and skip > 0 then
 				local units = M.get_state(const.STATE_KEY.units) or 0
@@ -274,10 +334,10 @@ function M.peek(module, job, image, more)
 				-- stays at the last position that showed any.
 				local last = M.get_state(const.STATE_KEY.last_valid_mediainfo_skip)
 				skip = last and last[key] or math.max(0, skip - units)
-				lines, last_line = M.metadata_lines(job, output, skip)
+				lines, last_line, eof = M.metadata_lines(job, output, skip)
 				while #lines == 0 and skip > 0 and units > 0 do
 					skip = math.max(0, skip - units)
-					lines, last_line = M.metadata_lines(job, output, skip)
+					lines, last_line, eof = M.metadata_lines(job, output, skip)
 				end
 			end
 			if #lines > 0 then
@@ -296,7 +356,7 @@ function M.peek(module, job, image, more)
 	end
 	if not image then
 		M.force_render()
-		ya.preview_widget(job, { ui.Clear(area), text(lines, area) })
+		ya.preview_widget(job, { ui.Clear(area), text(fit(lines, area.h, eof, 0), area) })
 		M.set_state(const.STATE_KEY.prev_metadata_area, {
 			x = area.x, y = area.y, w = area.w, h = area.h,
 			win_x = area.x, win_y = area.y, win_w = area.w, win_h = area.h,
@@ -312,23 +372,28 @@ function M.peek(module, job, image, more)
 	end
 	M.force_render()
 
-	local drawn = fs.cha(image)
-		and ya.image_show(image, ui.Rect({
+	-- The centering in main.lua returns the rows it moved the image down by as
+	-- the third value.
+	local drawn, _, margin
+	if fs.cha(image) then
+		drawn, _, margin = ya.image_show(image, ui.Rect({
 			x = area.x,
 			y = area.y,
 			w = area.w,
 			h = height > 0 and math.max(area.h - height, area.h / 2) or area.h,
 		}))
+	end
 	-- No image is made for a skip past the end of a video. Keep the room the
 	-- last one took, so the metadata does not jump up.
-	local heights = M.get_state(const.STATE_KEY.prev_image_height)
-	local image_height = drawn and drawn.h or (heights and heights[key]) or 0
+	local rooms = M.get_state(const.STATE_KEY.prev_image_height)
+	local room = drawn and { h = drawn.h, margin = margin or 0 } or (rooms and rooms[key]) or { h = 0, margin = 0 }
 	if drawn then
-		M.set_state(const.STATE_KEY.prev_image_height, { [key] = image_height })
+		M.set_state(const.STATE_KEY.prev_image_height, { [key] = room })
 	end
 
-	local below = ui.Rect({ x = area.x, y = area.y + image_height, w = area.w, h = area.h - image_height })
-	ya.preview_widget(job, { text(lines, below) })
+	local below = ui.Rect({ x = area.x, y = area.y + room.h, w = area.w, h = area.h - room.h })
+	local fitted, rows = fit(lines, below.h, eof, room.margin)
+	ya.preview_widget(job, { text(fitted, ui.Rect({ x = below.x, y = below.y, w = below.w, h = rows })) })
 	M.set_state(const.STATE_KEY.prev_metadata_area, not job.args.no_metadata and {
 		x = below.x, y = below.y, w = below.w, h = below.h,
 		win_x = area.x, win_y = area.y, win_w = area.w, win_h = area.h,

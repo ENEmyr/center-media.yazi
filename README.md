@@ -195,12 +195,14 @@ require("center-media"):setup({
 
 `text` picks how the metadata is centered:
 
-- `block` keeps every line left-aligned and centers the block as a whole. A
-  block as wide as the pane, which happens as soon as one metadata line is long,
-  stays where it is.
-- `center` centers each line on its own. A line wider than the pane then loses
-  its beginning as well as its end, so prefer `block` unless the metadata is
-  short.
+- `block` keeps every line left-aligned and centers the block as a whole. So
+  that one long line, such as the encoder settings of many videos, does not
+  stretch the block across the pane, the bundled previewer cuts a line wider
+  than the pane to the width of the widest line that fits and ends it in an
+  ellipsis, or wraps it at that width when Yazi's `preview.wrap` is on. A block
+  from another previewer that is as wide as the pane stays where it is.
+- `center` centers each line on its own. With another previewer, a line wider
+  than the pane then loses its beginning as well as its end.
 - `off` leaves the metadata alone and centers only the image.
 
 `sections` picks which sections of the `mediainfo` output to show, by the
@@ -259,10 +261,12 @@ The actions are `toggle-metadata`, `toggle-preview`, `hide-metadata`,
 `hide-preview`, `show-metadata`, `show-preview` and `reset`. Several can be run
 at once as flags, as in `plugin center-media -- --show-preview --hide-metadata`.
 
-Yazi's seek keys (`J` and `K` by default) scroll the metadata. For a video they
-also move the thumbnail through the video, and for an audio or Adobe file with
-several pictures or layers, scrolling past the end of the metadata steps
-through them.
+Yazi's seek keys (`J` and `K` by default) scroll the metadata. Metadata that
+does not fit in the pane ends in an ellipsis, as a hint that there is more to
+scroll to, and stops as far above the bottom of the pane as the image starts
+below its top. For a video the seek keys also move the thumbnail through the
+video, and for an audio or Adobe file with several pictures or layers,
+scrolling past the end of the metadata steps through them.
 
 ### Theme
 
@@ -289,8 +293,9 @@ image_alloc = 1073741824 # 1 GiB
 
 - Only previews that go through this plugin are centered. Other previewers,
   including ones that draw images, are left alone.
-- When the metadata is taller than half the pane, the previewer is already
-  clipping it, and the vertical offset takes a few more lines off the bottom.
+- When the metadata is taller than half the pane, the image gets the top half
+  and is centered in it. Metadata that still fits below the image can then sit
+  a few rows below the middle of the pane.
 - Changing the terminal font size invalidates the learned cell size. The next
   draw that is not clipped by the pane learns it again; until then images are
   drawn twice.

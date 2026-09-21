@@ -16,7 +16,8 @@ work=$(mktemp -d)
 readonly root work
 readonly id=$$ # Yazi client id, for ya emit-to
 readonly sock=center-media-$$
-readonly W=100 H=60
+readonly W=100
+H=60 # changed by resize
 readonly log=$work/state/yazi/yazi.log
 
 cleanup() {
@@ -159,7 +160,9 @@ centered_rows() { near "$top" "$bottom"; }
 room() { ((top + bottom >= 4)); }
 fits() { ((bottom > 0)); }
 centered_image() { ((ileft >= 0)) && near "$ileft" "$iright"; }
-centered_text() { ((tleft >= 0)) && near "$tleft" "$tright"; }
+# A block as wide as the pane is left where it is, which near() cannot tell
+# from centered, so the metadata has to leave room beside it.
+centered_text() { ((tleft >= 0 && tleft + tright >= 4)) && near "$tleft" "$tright"; }
 
 checks=0
 # expect DESCRIPTION COMMAND...: fails the run with DESCRIPTION unless COMMAND succeeds.
@@ -178,6 +181,20 @@ preview() {
 }
 
 press() { tmux -L "$sock" send-keys -t e2e "$1"; }
+resize() {
+	tmux -L "$sock" resize-window -t e2e -y "$1"
+	H=$1
+}
+# The last row of the preview that is not blank is an ellipsis in the middle.
+ends_in_ellipsis() {
+	local row lead
+	row=$(pane | sed -n "2,$((H - 1))p" | grep -v '^ *$' | tail -n 1 | sed 's/ *$//')
+	[[ $row =~ ^( *)…$ ]] || return 1
+	lead=${#BASH_REMATCH[1]}
+	near "$lead" "$((W - lead - 1))"
+}
+above() { ((top > 0)); }
+cut_line() { pane | grep -qE 'Encoding settings: .*… *$'; }
 
 printf -v yazi_cmd 'env YAZI_CONFIG_HOME=%q XDG_STATE_HOME=%q YAZI_LOG=debug yazi --client-id %q %q; echo yazi exited $?; sleep 600' \
 	"$work/config" "$work/state" "$id" "$media/sub.srt"
@@ -218,6 +235,7 @@ press F4
 until_ok "the image to hide" no_image
 expect "image hidden: the metadata is not centered left to right" centered_text
 expect "image hidden: the metadata is not centered top to bottom" centered_rows
+expect "image hidden: the line wider than the pane does not end in an ellipsis" cut_line
 
 # The image stays hidden for the next file, and then all of the audio's
 # metadata fits: General and Audio only, without the cover's Image section or
@@ -230,6 +248,14 @@ expect "song.mp3: shows the Image section" no_heading Image
 expect "song.mp3: shows Cover lines" hides Cover
 press F5
 until_ok "the image to come back" has_image
+
+# In a shorter pane wide.png's metadata does not fit: it ends in an ellipsis
+# and stops as many rows above the bottom as the image starts below the top.
+resize 30
+preview wide.png
+expect "short pane: wide.png has no room above it, so the margin is not tested" above
+expect "short pane: the metadata does not end in an ellipsis in the middle" ends_in_ellipsis
+expect "short pane: the room below the metadata differs from the room above the image" centered_rows
 
 ya emit-to "$id" quit
 until_ok "Yazi to exit" shows "yazi exited 0"
