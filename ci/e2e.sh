@@ -195,14 +195,13 @@ for f in wide.png image.png image.tiff image.svg art.eps video.mp4 song.mp3; do
 	expect "$f: the preview is not centered top to bottom" centered_rows
 done
 
-# Audio without cover art shows a blank 1x1 image instead, which still takes
-# up two rows above the metadata, so only left to right is checked there.
-preview plain.wav
-expect "plain.wav: the metadata is not centered left to right" centered_text
-expect "plain.wav: no Audio section" heading Audio
-preview sub.srt
-expect "sub.srt: the metadata is not centered left to right" centered_text
-expect "sub.srt: the metadata is not centered top to bottom" centered_rows
+# Audio without cover art, and a subtitle file, have no image to show.
+for f in plain.wav sub.srt; do
+	preview "$f"
+	expect "$f: the metadata is not centered left to right" centered_text
+	expect "$f: the metadata is not centered top to bottom" centered_rows
+	[[ $f == sub.srt ]] || expect "$f: no Audio section" heading Audio
+done
 expect "sub.srt: no Text section" heading Text
 
 # The keymaps switch the metadata and the image off and on, and whatever is

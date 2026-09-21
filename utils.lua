@@ -229,6 +229,14 @@ local function text(lines, area)
 	return ui.Text(lines):area(area):wrap(wrap and ui.Wrap.YES or ui.Wrap.NO)
 end
 
+--- Whether `image` is the blank 1x1 picture audio.lua caches in place of
+--- missing cover art. It only keeps preload from looking for the cover again,
+--- and drawing it would push the metadata down by the rows it takes.
+local function blank(image)
+	local info = ya.image_info(image)
+	return info ~= nil and info.w == 1 and info.h == 1
+end
+
 --- The peek every media module shares: the preview image at the top, if the
 --- module has one, and the metadata below it.
 --- `image` is the cached preview image, nil for a module that only shows
@@ -283,6 +291,9 @@ function M.peek(module, job, image, more)
 	end
 
 	local area = job.area
+	if image and blank(image) then
+		image = nil
+	end
 	if not image then
 		M.force_render()
 		ya.preview_widget(job, { ui.Clear(area), text(lines, area) })

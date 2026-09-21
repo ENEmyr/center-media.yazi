@@ -253,9 +253,9 @@ end
 local module = { preload = function()
 	return true
 end }
-local function peek(skip, more)
+local function peek(skip, more, image)
 	state, drawn, emitted = { [const.STATE_KEY.units] = 5 }, nil, nil
-	utils.peek(module, { skip = skip, mime = "audio/mpeg", args = {}, file = { url = "song.mp3" }, area = { x = 0, y = 0, w = 80, h = 10 } }, nil, more)
+	utils.peek(module, { skip = skip, mime = "audio/mpeg", args = {}, file = { url = "song.mp3" }, area = { x = 0, y = 0, w = 80, h = 10 } }, image, more)
 	return drawn and drawn[2].lines or {}
 end
 check("peek shows the metadata", peek(0)[1] and peek(0)[1].text == "General")
@@ -264,6 +264,15 @@ local back = peek(200, function()
 	return true
 end)
 check("peek past the end with more to show keeps the last metadata", #back > 0 and not emitted)
+local shown
+ya.image_info = function(url)
+	return url == "blank.png" and { w = 1, h = 1 } or nil
+end
+ya.image_show = function()
+	shown = true
+end
+local lines = peek(0, nil, "blank.png")
+check("peek draws no image for the blank cover, only the metadata", lines[1] and lines[1].text == "General" and not shown)
 os.remove(cache .. const.suffix)
 os.remove(cache)
 

@@ -49,7 +49,7 @@ ffprobe -v error -select_streams v -show_entries stream=index:stream_disposition
 	fail "ffprobe does not mark the cover of song.mp3 as attached_pic"
 
 # audio.lua (preload): for audio without cover art, ffmpeg says so in these
-# words, and the plugin then draws a blank image with magick instead.
+# words, and the plugin then caches a blank image made with magick instead.
 out=$(ffmpeg -v error -i "$media/plain.wav" -map '0:v:0?' -an -sn -dn -vframes 1 -f image2 -y "$tmp/cover.jpg" 2>&1 || true)
 [[ $out == *"does not contain any stream"* ]] || fail "ffmpeg on audio without cover art says: $out"
 out=$(magick -size 1x1 canvas:none "PNG32:$tmp/blank.png" 2>&1 || true)

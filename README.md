@@ -67,8 +67,9 @@ equals the gap added at the top, which is what centers the two together.
   audio cover art
 - [ImageMagick](https://imagemagick.org) for HEIC, AVIF, JPEG XL, TIFF and Canon
   raw images, for Illustrator, Photoshop and EPS files (with
-  [Ghostscript](https://ghostscript.com) for Illustrator and EPS), and for the
-  blank image shown in place of missing audio cover art
+  [Ghostscript](https://ghostscript.com) for Illustrator and EPS), and for audio
+  without cover art, which it marks in the cache with a blank image so the
+  cover art is not looked for again
 - [resvg](https://github.com/linebender/resvg) for SVG images
 
 Without `mediainfo`, files go to the previewer Yazi itself would have used, so
