@@ -321,6 +321,11 @@ API and real `mediainfo` output:
 lua5.4 tests/metadata.lua
 ```
 
+A GitHub Actions workflow also runs the plugin inside Yazi against the tools
+it depends on, on every change and weekly against their newest versions, to
+catch an update that breaks it. [ci/README.md](ci/README.md) describes the
+checks and how to run them locally.
+
 ## Credits
 
 The media previewer is derived from

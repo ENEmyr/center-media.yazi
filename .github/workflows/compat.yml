@@ -1,0 +1,70 @@
+# Checks the plugin against the tools it depends on (Yazi, mediainfo, FFmpeg,
+# ImageMagick, Ghostscript, resvg), so that an update that breaks it shows up
+# here before users hit it. ci/README.md describes the checks.
+name: compat
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "assets/**", "LICENSE", ".gitignore"]
+  pull_request:
+    paths-ignore: ["**.md", "assets/**", "LICENSE", ".gitignore"]
+  schedule:
+    - cron: "17 3 * * 1" # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # A change to the plugin, against fixed versions of everything: Yazi 26.9.1,
+  # the version main.lua declares, and the other tools of the same day. To move
+  # to newer versions, bump the image tag and ARCH_SNAPSHOT to the same date.
+  pinned:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: docker.io/archlinux/archlinux:base-20260920.0.597023
+    env:
+      ARCH_SNAPSHOT: 2026/09/20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash ci/install.sh
+      - run: bash ci/check.sh
+
+  # The plugin as it is, against this week's Arch packages, then against the
+  # Yazi nightly build on top of them. Both run even when the first fails.
+  upstream:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    container: docker.io/archlinux/archlinux:latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: bash ci/install.sh
+      - name: Latest packages
+        id: latest
+        continue-on-error: true
+        run: bash ci/check.sh
+      - name: Yazi nightly
+        id: nightly
+        continue-on-error: true
+        run: |
+          bash ci/nightly.sh "$RUNNER_TEMP/yazi-nightly"
+          PATH="$RUNNER_TEMP/yazi-nightly:$PATH" bash ci/check.sh
+      - name: Result
+        if: steps.latest.outcome != 'success' || steps.nightly.outcome != 'success'
+        env:
+          LATEST: ${{ steps.latest.outcome }}
+          NIGHTLY: ${{ steps.nightly.outcome }}
+        run: |
+          echo "Latest packages: $LATEST, Yazi nightly: $NIGHTLY"
+          exit 1
