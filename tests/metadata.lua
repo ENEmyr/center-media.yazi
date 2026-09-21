@@ -1,6 +1,8 @@
 -- Tests for the metadata side of the bundled previewer, run outside Yazi:
 --
---     lua5.4 tests/metadata.lua
+--     lua tests/metadata.lua
+--
+-- with Lua 5.5, the version Yazi runs plugins with.
 --
 -- Yazi's Lua API is stubbed with just enough to run the plugin's modules. The
 -- fixtures are real `mediainfo` output for files with embedded cover art.
@@ -16,10 +18,10 @@ ya = {
 		end
 	end,
 }
-rt = { preview = { tab_size = 2, wrap = "no" } }
+rt = { preview = { tab_size = 2, wrap = 0 } }
 th = { spot = {} }
 ui = {
-	Wrap = { YES = 1 },
+	Wrap = { NO = 0, YES = 1 },
 	Align = { CENTER = "center" },
 	Style = function()
 		local s = {}
@@ -47,28 +49,55 @@ ui = {
 		return {
 			text = table.concat(t),
 			width = function(self)
-				return utf8.len(self.text)
+				return ui.width(self.text)
 			end,
 			align = function(self, align)
 				self.alignment = align
 				return self
 			end,
+			style = function(self)
+				return self
+			end,
 		}
 	end,
+	-- Columns on screen: Thai vowel and tone marks take none, like in Yazi.
 	width = function(s)
-		return utf8.len(s)
+		local n = 0
+		for _, c in utf8.codes(s) do
+			local mark = c == 0x0E31 or (c >= 0x0E34 and c <= 0x0E3A) or (c >= 0x0E47 and c <= 0x0E4E)
+			n = n + (mark and 0 or 1)
+		end
+		return n
 	end,
-	-- Wraps by character count, which is what ui.lines does for ASCII text.
+	-- Wraps by columns, and drops the space a row breaks at, as Yazi's word
+	-- wrapping does at a space. Returns the rows with their widths.
 	lines = function(line, opt)
-		local width = (opt.wrap == "yes" or opt.wrap == ui.Wrap.YES) and opt.width or math.huge
-		local rows, n, i = {}, utf8.len(line), 1
-		repeat
-			local len = math.min(width, n - i + 1)
+		local width = opt.wrap == ui.Wrap.YES and opt.width or math.huge
+		local rows, used, drop = {}, 0, false
+		local function row(w)
 			rows[#rows + 1] = { width = function()
-				return len
+				return w
 			end }
-			i = i + len
-		until i > n
+		end
+		for _, c in utf8.codes(line) do
+			local char = utf8.char(c)
+			local w = ui.width(char)
+			if drop and char == " " then
+				drop = false
+			elseif used + w > width then
+				row(used)
+				used, drop = w, false
+			else
+				used, drop = used + w, false
+			end
+			if used == width then
+				row(used)
+				used, drop = 0, true
+			end
+		end
+		if used > 0 or #rows == 0 then
+			row(used)
+		end
 		return rows
 	end,
 }
@@ -97,12 +126,12 @@ end
 local function render(output, mime, opts)
 	opts = opts or {}
 	local job = { mime = mime, area = { w = opts.w or 200, h = opts.h or 200 } }
-	local lines, last, eof = utils.metadata_lines(job, output, opts.skip or 0)
+	local lines, last, eof, width = utils.metadata_lines(job, output, opts.skip or 0)
 	local out = {}
 	for _, l in ipairs(lines) do
 		out[#out + 1] = l.text
 	end
-	return out, last, eof
+	return out, last, eof, width
 end
 
 local function setup(opts)
@@ -203,9 +232,9 @@ local skipped, last_skipped = render(fixture("song.mp3"), "audio/mpeg", { h = 5,
 check("skip starts further in", skipped[1] == full[4] and #skipped == 5 and last_skipped == 8)
 local past, _, eof_past = render(fixture("song.mp3"), "audio/mpeg", { h = 5, skip = #full + 3 })
 check("skip past the end shows nothing", #past == 0 and eof_past)
-rt.preview.wrap = "yes"
+rt.preview.wrap = ui.Wrap.YES
 check("narrow pane wraps long lines", #render(fixture("song.mp3"), "audio/mpeg", { w = 12 }) > #full)
-rt.preview.wrap = "no"
+rt.preview.wrap = ui.Wrap.NO
 
 -- A line wider than the pane gets the width of the widest line that fits.
 local long = "General\nFormat                                   : MPEG-4\n"
@@ -213,11 +242,34 @@ local long = "General\nFormat                                   : MPEG-4\n"
 local cut = render(long, "video/mp4", { w = 40 })
 check("a line wider than the pane is cut to the widest line and ends in an ellipsis",
 	#cut == 3 and cut[3] == "Encoding sett…" and utf8.len(cut[3]) == utf8.len(cut[2]))
-rt.preview.wrap = "yes"
+rt.preview.wrap = ui.Wrap.YES
 local wrapped = render(long, "video/mp4", { w = 40 })
-check("with wrapping on, it wraps near the widest line instead of at the pane",
-	#wrapped > 3 and not wrapped[3]:find("…") and utf8.len(wrapped[3]) < 20)
-rt.preview.wrap = "no"
+local joined, widest = {}, 0
+for k = 3, #wrapped do
+	joined[#joined + 1] = wrapped[k]
+	widest = math.max(widest, utf8.len(wrapped[k]))
+end
+check("with wrapping on, it wraps at the widest line instead of at the pane",
+	#wrapped > 3 and widest == utf8.len(wrapped[2]) and not table.concat(joined):find("…"))
+check("wrapping loses no character but the spaces it breaks at",
+	table.concat(joined):gsub(" ", "") == ("Encoding settings: cabac=1 / ref=1 / deblock=1:0:0 / analyse=0x3:0x113"):gsub(" ", ""))
+rt.preview.wrap = ui.Wrap.NO
+local narrow = render(long, "video/mp4", { w = 10 })
+check("a pane too narrow for any line cuts at its edge, not at a heading's width",
+	narrow[1] == "General" and narrow[2] == "Format: M…" and utf8.len(narrow[3]) == 10)
+rt.preview.wrap = ui.Wrap.YES
+local short = render("General\nA                                        : b\nLong                                     : "
+	.. string.rep("x", 60) .. "\n", "video/mp4", { w = 40 })
+check("a heading wider than every other line that fits is not wrapped", short[1] == "General" and utf8.len(short[3]) == 7)
+rt.preview.wrap = ui.Wrap.NO
+local _, _, _, block = render(long, "video/mp4", { w = 40 })
+check("the block width counts the lines not shown", block == utf8.len("Format: MPEG-4"))
+local _, _, _, lone = render("General\n", "image/svg+xml", { w = 98 })
+check("metadata of a heading alone is as wide as the heading, not the pane", lone == utf8.len("General"))
+local thai = render("General\nTitle                                    : สวัสดีครับ ทดสอบภาษาไทย\n", "audio/mpeg")
+check("Thai vowel and tone marks do not cost the last characters", thai[2] == "Title: สวัสดีครับ ทดสอบภาษาไทย")
+local exact, _, eof_exact = render(fixture("song.mp3"), "audio/mpeg", { h = #full })
+check("metadata that ends exactly at the bottom of the area has reached its end", #exact == #full and eof_exact)
 
 -- The session caches.
 state = {}
@@ -326,6 +378,18 @@ end
 local rect
 lines, rect = peek(0, nil, "cover.jpg")
 check("metadata under an image leaves as much room below it as the image above", rect.h == 3 and #lines == 3 and last(lines) == "…")
+local block_width = select(4, utils.metadata_lines({ mime = "audio/mpeg", area = { w = 80, h = 10 } }, fixture("song.mp3"), 0))
+check("the block width goes along with the lines", block_width and drawn[#drawn].lines.width == block_width)
+module.preload = function()
+	return true, "Failed to start `ffmpeg`."
+end
+lines = peek(0)
+check("an error shows first even when the metadata fills the pane", lines[1] and lines[1].text == "Failed to start `ffmpeg`.")
+module.preload = function()
+	return false, "Permission denied"
+end
+lines = peek(0)
+check("a cache that cannot be written shows why", #lines == 1 and lines[1].text == "Permission denied")
 os.remove(cache .. const.suffix)
 os.remove(cache)
 

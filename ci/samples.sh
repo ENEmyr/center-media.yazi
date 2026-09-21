@@ -36,8 +36,10 @@ cat >image.svg <<'EOF'
   <circle cx="160" cy="120" r="80" fill="gold"/>
 </svg>
 EOF
+# The Thai title has vowel and tone marks, which take no column on screen.
 ffmpeg -v error -y -f lavfi -i "sine=frequency=440:duration=2" -i image.png \
-	-map 0:a -map 1:v -c:a libmp3lame -c:v mjpeg -id3v2_version 3 -disposition:v attached_pic song.mp3
+	-map 0:a -map 1:v -c:a libmp3lame -c:v mjpeg -id3v2_version 3 -disposition:v attached_pic \
+	-metadata title="สวัสดีครับ ทดสอบภาษาไทย" song.mp3
 ffmpeg -v error -y -f lavfi -i "sine=frequency=440:duration=2" plain.wav
 # libx264 writes an "Encoding settings" line wider than the pane, as most videos
 # have, which must not keep the metadata from being centered.

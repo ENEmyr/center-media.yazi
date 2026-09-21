@@ -203,7 +203,8 @@ require("center-media"):setup({
   from another previewer that is as wide as the pane stays where it is.
 - `center` centers each line on its own. With another previewer, a line wider
   than the pane then loses its beginning as well as its end.
-- `off` leaves the metadata alone and centers only the image.
+- `off` leaves the metadata where the previewer puts it, left to right. Top to
+  bottom, `vertical` still centers metadata shown without an image.
 
 `sections` picks which sections of the `mediainfo` output to show, by the
 file's MIME top-level type (`audio`, `video`, `image` and so on). A type that is
@@ -265,8 +266,9 @@ Yazi's seek keys (`J` and `K` by default) scroll the metadata. Metadata that
 does not fit in the pane ends in an ellipsis, as a hint that there is more to
 scroll to, and stops as far above the bottom of the pane as the image starts
 below its top. For a video the seek keys also move the thumbnail through the
-video, and for an audio or Adobe file with several pictures or layers,
-scrolling past the end of the metadata steps through them.
+video. For an audio or Adobe file with several pictures or layers they also
+step through those, one per step, and go on past the end of the metadata until
+the last one.
 
 ### Theme
 
@@ -321,10 +323,11 @@ metadata.
 ## Development
 
 The metadata handling has tests that run outside Yazi, against stubs of its Lua
-API and real `mediainfo` output:
+API and real `mediainfo` output. Run them with Lua 5.5, the version Yazi runs
+plugins with:
 
 ```sh
-lua5.4 tests/metadata.lua
+lua tests/metadata.lua
 ```
 
 A GitHub Actions workflow also runs the plugin inside Yazi against the tools

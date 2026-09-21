@@ -158,6 +158,12 @@ has_image() { settle && ((ileft >= 0)); }
 no_image() { settle && ((ileft < 0 && tleft >= 0)); }
 centered_rows() { near "$top" "$bottom"; }
 room() { ((top + bottom >= 4)); }
+room_beside() { ((ileft + iright >= 4)); }
+same_rows() { ((top == bottom)); }
+at_top() { ((top == 0)); }
+# Once scrolled, no "General" heading is left to tell the metadata from an
+# image by, so the leftmost column of either counts.
+in_column() { (((tleft >= 0 ? tleft : ileft) == $1)); }
 fits() { ((bottom > 0)); }
 centered_image() { ((ileft >= 0)) && near "$ileft" "$iright"; }
 # A block as wide as the pane is left where it is, which near() cannot tell
@@ -195,6 +201,15 @@ ends_in_ellipsis() {
 }
 above() { ((top > 0)); }
 cut_line() { pane | grep -qE 'Encoding settings: .*… *$'; }
+changed() { [[ $(pane) != "$1" ]]; }
+# scroll: presses J and waits for the preview to move and settle.
+scroll() {
+	local before
+	before=$(pane)
+	press J
+	until_ok "the preview to scroll (or the metadata is too short to scroll this far)" changed "$before"
+	settle
+}
 
 printf -v yazi_cmd 'env YAZI_CONFIG_HOME=%q XDG_STATE_HOME=%q YAZI_LOG=debug yazi --client-id %q %q; echo yazi exited $?; sleep 600' \
 	"$work/config" "$work/state" "$id" "$media/sub.srt"
@@ -207,6 +222,7 @@ until_ok "Yazi to start" shows "Complete name: $media/sub.srt"
 for f in wide.png image.png image.tiff image.svg art.eps video.mp4 song.mp3; do
 	preview "$f"
 	[[ $f != wide.png ]] || expect "wide.png: leaves no room to center top to bottom" room
+	[[ $f != image.png ]] || expect "image.png: leaves no room to center left to right" room_beside
 	expect "$f: the image is not centered left to right" centered_image
 	expect "$f: the metadata is not centered left to right" centered_text
 	expect "$f: the preview is not centered top to bottom" centered_rows
@@ -246,6 +262,7 @@ expect "song.mp3: the metadata does not fit" fits
 expect "song.mp3: no Audio section" heading Audio
 expect "song.mp3: shows the Image section" no_heading Image
 expect "song.mp3: shows Cover lines" hides Cover
+expect "song.mp3: the Thai title lost characters" shows "สวัสดีครับ ทดสอบภาษาไทย"
 press F5
 until_ok "the image to come back" has_image
 
@@ -255,10 +272,32 @@ resize 30
 preview wide.png
 expect "short pane: wide.png has no room above it, so the margin is not tested" above
 expect "short pane: the metadata does not end in an ellipsis in the middle" ends_in_ellipsis
-expect "short pane: the room below the metadata differs from the room above the image" centered_rows
+expect "short pane: the room below the metadata differs from the room above the image" same_rows
+
+# Scrolled metadata without an image stays at the top, and the block keeps its
+# place while other lines scroll into view.
+resize 14
+preview plain.wav
+first=$tleft
+for step in 1 2 3; do
+	scroll
+	expect "scroll $step: the metadata left the top of the pane" at_top
+	expect "scroll $step: the metadata moved sideways from column $first" in_column "$first"
+done
+expect "scrolled: the rest of the metadata still fills the pane, so staying at the top is not tested" fits
+
+# Yazi keeps no cache for the files in its own cache directory, its cached
+# previews, so those go to Yazi's own previewer.
+resize 30
+cp "$media/image.png" "$work/cache/cached.png"
+ya emit-to "$id" reveal "$work/cache/cached.png"
+until_ok "the cached preview to show" has_image
+expect "cache directory: shows metadata it cannot have" hides "Complete name"
 
 ya emit-to "$id" quit
 until_ok "Yazi to exit" shows "yazi exited 0"
+
+[[ ! -e nil_mediainfo ]] || fail "a file named nil_mediainfo was written to $PWD"
 
 # Errors from the preloader and the keymap actions go to the log. "send failed"
 # is not one: Yazi logs it when it cancels a preview, for the next file or for

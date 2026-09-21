@@ -42,8 +42,9 @@ function M:peek(job)
 	local start = os.clock()
 	ya.sleep(math.max(0, rt.preview.image_delay / 1000 + start - os.clock()))
 
-	-- Need mime to decide which module to use
-	if not job.mime then
+	-- The mime picks the module. Without Yazi's cache, which it keeps for no
+	-- file in its own cache directory, there is nothing to draw with.
+	if not job.mime or not ya.file_cache({ file = job.file, skip = 0 }) then
 		return
 	end
 
@@ -76,9 +77,11 @@ function M:preload(job)
 		return false
 	end
 
+	-- With the image and the metadata both hidden there is nothing to prepare,
+	-- which is done; false would have Yazi preload the file again every time.
 	local module = module_for(job)
 	if not module then
-		return false
+		return true
 	end
 	return module:preload(job)
 end
@@ -160,9 +163,14 @@ function M:entry(job)
 		end
 		ya.sleep(0.1)
 	end
+	-- A file this previewer does not show, as when mediainfo is missing and
+	-- another previewer shows it, has no recorded preview. The toggle then flips
+	-- the setting as it stands for every file.
 	if not args then
-		utils.error("Preview data is loading, try again later")
-		return
+		args = {
+			no_metadata = utils.get_state(const.STATE_KEY.no_metadata),
+			no_preview = utils.get_state(const.STATE_KEY.no_preview),
+		}
 	end
 
 	for _, t in ipairs(TOGGLES) do

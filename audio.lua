@@ -31,7 +31,7 @@ local function get_cover_layers(job)
 	local data = ya.json_decode(output.stdout)
 	if type(data) == "table" and type(data.streams) == "table" then
 		for _, stream in ipairs(data.streams) do
-			if stream.disposition and stream.disposition.attached_pic then
+			if stream.disposition and stream.disposition.attached_pic == 1 then
 				covers[#covers + 1] = stream.index
 			end
 		end
@@ -40,13 +40,15 @@ local function get_cover_layers(job)
 	return covers
 end
 
---- Which embedded picture the scroll position is on.
+--- Which embedded picture the scroll position is on, counted from 1: one
+--- further with every seek step, like the layers of an Adobe file.
 local function cover_index(job)
-	return math.max(1, utils.step(job))
+	return utils.step(job) + 1
 end
 
 function M:peek(job)
-	-- Past the end of the metadata, scrolling steps through the embedded pictures.
+	-- Scrolling steps through the embedded pictures, past the end of the
+	-- metadata too while there are more.
 	return utils.peek(self, job, ya.file_cache(job), function()
 		return get_cover_layers(job)[cover_index(job)] ~= nil
 	end)
@@ -62,14 +64,12 @@ function M:preload(job)
 
 	-- NOTE: Only generate preview image when cache image is not exist
 	if cache_img_url and (not cache_img_url_cha or cache_img_url_cha.len <= 0) then
+		-- The cover the scroll position is on, or the last one past them. ffprobe
+		-- reports streams by their index in the file, which "0:N" picks; without
+		-- a cover, "0:v:0?" takes the first video stream if there is one.
 		local covers = get_cover_layers(job)
-		local index = covers[1] or 0
-		if utils.get_state(const.STATE_KEY.units) then
-			index = cover_index(job)
-			if not covers[index] then
-				index = math.max(0, #covers - 1)
-			end
-		end
+		local position = utils.get_state(const.STATE_KEY.units) and cover_index(job) or 1
+		local stream = covers[math.min(position, #covers)]
 		local qv = 31 - math.floor(rt.preview.image_quality * 0.3)
 		local audio_preload_output, audio_preload_err = Command("ffmpeg"):arg({
 			"-v",
@@ -79,7 +79,7 @@ function M:preload(job)
 			"-i",
 			tostring(utils.path(job)),
 			"-map",
-			string.format("0:v:%d?", index),
+			stream and string.format("0:%d", stream) or "0:v:0?",
 			"-an",
 			"-sn",
 			"-dn",

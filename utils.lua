@@ -127,7 +127,7 @@ end
 
 --- Whether the preview wraps long lines, as Yazi's preview.wrap setting says.
 local function wraps()
-	return rt.preview.wrap == "yes" or rt.preview.wrap == ui.Wrap.YES
+	return rt.preview.wrap == ui.Wrap.YES
 end
 
 --- The dim ellipsis that marks metadata cut short, down or to the right.
@@ -135,24 +135,36 @@ local function ellipsis()
 	return ui.Span("…"):style(ui.Style():dim())
 end
 
---- The start of `s` that takes at most `width` columns on screen.
-local function clip(s, width)
-	local out, used = {}, 0
-	for _, code in utf8.codes(s) do
+--- The characters of `s` from the `from`th on that fill at most `width`
+--- columns, marks that take no column included, and where the row after them
+--- starts. Wrapping breaks a row at a space and drops it, so that is skipped.
+local function take(s, from, width)
+	local start = utf8.offset(s, from)
+	if not start or start > #s then
+		return "", from
+	end
+	local out, used, after = {}, 0, from
+	for _, code in utf8.codes(s:sub(start)) do
 		local char = utf8.char(code)
 		used = used + ui.width(char)
 		if used > width then
 			break
 		end
 		out[#out + 1] = char
+		after = after + 1
 	end
-	return table.concat(out)
+	local rest = utf8.offset(s, after)
+	if rest and s:sub(rest, rest) == " " then
+		after = after + 1
+	end
+	return table.concat(out), after
 end
 
 --- Turn cached mediainfo output into the lines of the metadata block, starting
 --- `skip` lines in and stopping once the preview area is full.
 --- Returns the lines, how many lines were walked through including skipped ones
---- (at most skip + area height), and whether the output ended inside the area.
+--- (at most skip + area height), whether the output ended inside the area, and
+--- how wide the block of all the lines is, the ones not shown included.
 function M.metadata_lines(job, output, skip)
 	local skip_labels = M.get_state(const.STATE_KEY.skip_labels) or const.skip_labels
 	local skip_section_labels = M.get_state(const.STATE_KEY.skip_section_labels) or {}
@@ -165,7 +177,9 @@ function M.metadata_lines(job, output, skip)
 
 	-- Pick the lines to show first, so that dropped sections cost no height.
 	local entries, current = {}, nil
-	for str in output:gsub("\n+$", ""):gmatch("[^\n]*") do
+	for raw in output:gsub("\n+$", ""):gmatch("[^\n]*") do
+		-- Bytes that are not UTF-8, as in a file name, would stop the counting below.
+		local str = utf8.len(raw) and raw or (raw:gsub("[\128-\255]", "?"))
 		local label, value = str:match("(.*[^ ])  +: (.*)")
 		current = not label and section_of(str) or current
 		if not (keep and current and not keep[current]) then
@@ -174,7 +188,7 @@ function M.metadata_lines(job, output, skip)
 					entries[#entries + 1] = { label = label, line = label .. ": " .. value }
 				end
 			elseif not skip_section_labels[str] then
-				entries[#entries + 1] = { line = str }
+				entries[#entries + 1] = { line = str, heading = section_of(str) ~= nil }
 			end
 		end
 	end
@@ -186,80 +200,73 @@ function M.metadata_lines(job, output, skip)
 	-- A line wider than the pane would make the block as wide as the pane, which
 	-- leaves it where it is instead of centering it. Such a line gets the width
 	-- of the widest line that fits: it wraps there when the preview wraps, and
-	-- is cut there and ended with an ellipsis when it does not.
-	local width = 0
+	-- is cut there and ended with an ellipsis when it does not. Section headings
+	-- are left out, so that a pane too narrow for any other line cuts at its
+	-- edge rather than at the width of "General".
+	local width, headings, overflows = 0, 0, false
 	for _, entry in ipairs(entries) do
 		entry.width = ui.Line(entry.line):width()
-		if entry.width <= job.area.w and entry.width > width then
-			width = entry.width
+		if entry.width > job.area.w then
+			overflows = true
+		elseif entry.heading then
+			headings = math.max(headings, entry.width)
+		else
+			width = math.max(width, entry.width)
 		end
 	end
-	width = width > 0 and width or math.max(1, job.area.w)
+	-- A heading that fits is not cut or wrapped either, and metadata that is
+	-- only headings, all of which fit, is as wide as they are.
+	if width > 0 or (headings > 0 and not overflows) then
+		width = math.max(width, headings)
+	else
+		width = math.max(1, job.area.w)
+	end
 
 	local lines = {}
 	local limit = job.area.h
 	local last_line = 0
 	local EOF_mediainfo = true
 	local opt = { ansi = true, tab_size = rt.preview.tab_size, wrap = rt.preview.wrap, width = width }
+	local label_style = ui.Style():fg("reset"):bold()
 	for i, entry in ipairs(entries) do
 		local label, line = entry.label, entry.line
 		local long = entry.width > width and not wraps()
 		if long then
-			line = clip(line, width - 1)
+			line = take(line, 1, width - 1)
 		end
-		local wrapped = ui.lines(line, opt)
-		local line_height = #wrapped
-		local from = 1
-		local to = math.min(line_height, skip + limit - last_line)
-
-		local total_rendered_text_len = 1
-		local total_label_rendered_len = 1
-		local label_total_len = label and utf8.len(label .. ": ") or 0
-		for j = from, to do
-			local current_line_components = {}
-			local wrapped_line_len = wrapped[j]:width() or 0
-			local wrapped_raw = M.utf8_sub(line, total_rendered_text_len, total_rendered_text_len + wrapped_line_len)
-			wrapped_line_len = utf8.len(wrapped_raw)
-			total_rendered_text_len = total_rendered_text_len + wrapped_line_len
-
-			if last_line + 1 > skip then
-				local label_raw = label_total_len - total_label_rendered_len <= 0 and ""
-					or M.utf8_sub(wrapped_raw, 1, label_total_len - total_label_rendered_len)
-				local label_raw_len = utf8.len(label_raw)
-				if label_raw_len > 0 then
-					table.insert(current_line_components, ui.Span(label_raw):style(ui.Style():fg("reset"):bold()))
-					total_label_rendered_len = total_label_rendered_len + label_raw_len
-					wrapped_raw = wrapped_raw:gsub("^" .. M.is_literal_string(label_raw), "", 1)
+		local rows = ui.lines(line, opt)
+		-- The label and its ": " take the first characters of the line.
+		local label_len = label and utf8.len(label .. ": ") or 0
+		local pos = 1
+		for j = 1, math.min(#rows, skip + limit - last_line) do
+			local piece, after = take(line, pos, rows[j]:width() or 0)
+			if last_line >= skip then
+				local len = utf8.len(piece)
+				local head = math.max(0, math.min(label_len - pos + 1, len))
+				local spans = {}
+				if head > 0 then
+					spans[#spans + 1] = ui.Span(M.utf8_sub(piece, 1, head)):style(label_style)
 				end
-				if total_label_rendered_len >= label_total_len then
-					local value_raw = wrapped_raw
-					table.insert(
-						current_line_components,
-						ui.Span(value_raw or ""):style(
-							label and (th.spot.tbl_col or ui.Style():fg("blue"))
-								or (th.spot.title or ui.Style():fg("green"))
-						)
+				if head < len or not label then
+					spans[#spans + 1] = ui.Span(M.utf8_sub(piece, head + 1)):style(
+						label and (th.spot.tbl_col or ui.Style():fg("blue")) or (th.spot.title or ui.Style():fg("green"))
 					)
 				end
 				if long then
-					table.insert(current_line_components, ellipsis())
+					spans[#spans + 1] = ellipsis()
 				end
-				table.insert(lines, ui.Line(current_line_components))
-			else
-				total_label_rendered_len = total_label_rendered_len + total_rendered_text_len
+				lines[#lines + 1] = ui.Line(spans)
 			end
+			pos = after
 			last_line = last_line + 1
-			if i == #entries and not wrapped[j + 1] then
-				EOF_mediainfo = true
-			end
 			if last_line >= skip + limit then
-				last_line = skip + limit
-				EOF_mediainfo = false
+				-- Full, and more follows unless this was the last row.
+				EOF_mediainfo = i == #entries and not rows[j + 1]
 				break
 			end
 		end
 	end
-	return lines, last_line, EOF_mediainfo
+	return lines, last_line, EOF_mediainfo, width
 end
 
 --- How many seek steps the preview has been scrolled by.
@@ -268,8 +275,16 @@ function M.step(job)
 	return units and math.floor(math.abs(job.skip / units)) or 0
 end
 
-local function text(lines, area)
+--- The lines as a Text in `area`. `width` is how wide the whole metadata block
+--- is, the lines not shown included: main.lua centers the block by it, so that
+--- scrolling does not move the block sideways.
+local function text(lines, area, width)
+	lines.width = width
 	return ui.Text(lines):area(area):wrap(wraps() and ui.Wrap.YES or ui.Wrap.NO)
+end
+
+local function error_line(err)
+	return ui.Line(tostring(err)):style(th.spot.title or ui.Style():fg("red"))
 end
 
 --- Whether `image` is the blank 1x1 picture audio.lua caches in place of
@@ -303,27 +318,31 @@ end
 --- metadata. `more(job)` tells whether scrolling past the end of the metadata
 --- still has something to show, such as later video frames or further layers.
 function M.peek(module, job, image, more)
+	-- Without a cache there is nothing to show but why, as when it cannot be written.
+	local function uncached(err)
+		ya.preview_widget(job, { ui.Clear(job.area), text({ error_line(err or "Cannot write the cache") }, job.area) })
+	end
 	local ok, preload_err = module:preload(job)
 	if not ok then
-		return
+		return uncached(preload_err)
 	end
 
 	local key = tostring(ya.file_cache({ file = job.file, skip = 0 }))
-	local lines, height, eof = {}, 0, true
+	local lines, height, eof, width = {}, 0, true, nil
 	if not job.args.no_metadata then
 		local output = M.read_mediainfo_cached_file(key .. const.suffix)
 		if output and output:match("^Error:") then
 			job.args.force_reload_mediainfo = true
 			ok, preload_err = module:preload(job)
-			if not ok or preload_err then
-				return
+			if not ok then
+				return uncached(preload_err)
 			end
 			output = M.read_mediainfo_cached_file(key .. const.suffix)
 		end
 		if output then
 			local skip = job.skip
 			local last_line
-			lines, last_line, eof = M.metadata_lines(job, output, skip)
+			lines, last_line, eof, width = M.metadata_lines(job, output, skip)
 			if eof and #lines == 0 and skip > 0 then
 				local units = M.get_state(const.STATE_KEY.units) or 0
 				if not (more and more(job)) then
@@ -334,10 +353,10 @@ function M.peek(module, job, image, more)
 				-- stays at the last position that showed any.
 				local last = M.get_state(const.STATE_KEY.last_valid_mediainfo_skip)
 				skip = last and last[key] or math.max(0, skip - units)
-				lines, last_line, eof = M.metadata_lines(job, output, skip)
+				lines, last_line, eof, width = M.metadata_lines(job, output, skip)
 				while #lines == 0 and skip > 0 and units > 0 do
 					skip = math.max(0, skip - units)
-					lines, last_line, eof = M.metadata_lines(job, output, skip)
+					lines, last_line, eof, width = M.metadata_lines(job, output, skip)
 				end
 			end
 			if #lines > 0 then
@@ -346,8 +365,9 @@ function M.peek(module, job, image, more)
 			height = math.min(job.area.h, last_line)
 		end
 	end
+	-- An error goes first, where metadata too long for the pane cannot hide it.
 	if preload_err then
-		table.insert(lines, ui.Line(tostring(preload_err)):style(th.spot.title or ui.Style():fg("red")))
+		table.insert(lines, 1, error_line(preload_err))
 	end
 
 	local area = job.area
@@ -356,7 +376,7 @@ function M.peek(module, job, image, more)
 	end
 	if not image then
 		M.force_render()
-		ya.preview_widget(job, { ui.Clear(area), text(fit(lines, area.h, eof, 0), area) })
+		ya.preview_widget(job, { ui.Clear(area), text(fit(lines, area.h, eof, 0), area, width) })
 		M.set_state(const.STATE_KEY.prev_metadata_area, {
 			x = area.x, y = area.y, w = area.w, h = area.h,
 			win_x = area.x, win_y = area.y, win_w = area.w, win_h = area.h,
@@ -374,9 +394,9 @@ function M.peek(module, job, image, more)
 
 	-- The centering in main.lua returns the rows it moved the image down by as
 	-- the third value.
-	local drawn, _, margin
+	local drawn, image_err, margin
 	if fs.cha(image) then
-		drawn, _, margin = ya.image_show(image, ui.Rect({
+		drawn, image_err, margin = ya.image_show(image, ui.Rect({
 			x = area.x,
 			y = area.y,
 			w = area.w,
@@ -385,6 +405,9 @@ function M.peek(module, job, image, more)
 	end
 	-- No image is made for a skip past the end of a video. Keep the room the
 	-- last one took, so the metadata does not jump up.
+	if not drawn and image_err then
+		table.insert(lines, 1, error_line(image_err))
+	end
 	local rooms = M.get_state(const.STATE_KEY.prev_image_height)
 	local room = drawn and { h = drawn.h, margin = margin or 0 } or (rooms and rooms[key]) or { h = 0, margin = 0 }
 	if drawn then
@@ -393,7 +416,7 @@ function M.peek(module, job, image, more)
 
 	local below = ui.Rect({ x = area.x, y = area.y + room.h, w = area.w, h = area.h - room.h })
 	local fitted, rows = fit(lines, below.h, eof, room.margin)
-	ya.preview_widget(job, { text(fitted, ui.Rect({ x = below.x, y = below.y, w = below.w, h = rows })) })
+	ya.preview_widget(job, { text(fitted, ui.Rect({ x = below.x, y = below.y, w = below.w, h = rows }), width) })
 	M.set_state(const.STATE_KEY.prev_metadata_area, not job.args.no_metadata and {
 		x = below.x, y = below.y, w = below.w, h = below.h,
 		win_x = area.x, win_y = area.y, win_w = area.w, win_h = area.h,
@@ -407,10 +430,6 @@ M.current_file = ya.sync(function()
 	end
 	return tostring(h.url)
 end)
-
-function M.error(s, ...)
-	ya.notify({ title = "center-media", content = string.format(s, ...), timeout = 3, level = "error" })
-end
 
 function M.tbl_to_set(t1)
 	local set = {}

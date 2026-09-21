@@ -30,7 +30,8 @@ local function image_layer_count(job)
 end
 
 function M:peek(job)
-	-- Past the end of the metadata, scrolling steps through the layers.
+	-- Scrolling steps through the layers, past the end of the metadata too
+	-- while there are more.
 	return utils.peek(self, job, ya.file_cache(job), function()
 		return image_layer_count(job) >= 1 + utils.step(job)
 	end)

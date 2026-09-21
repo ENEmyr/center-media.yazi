@@ -21,5 +21,5 @@ else
 	# verify, so the keyring is updated first.
 	pacman_quiet -Sy archlinux-keyring
 fi
-pacman_quiet -Syu "${tools[@]}" chafa tmux lua54 unzip
+pacman_quiet -Syu "${tools[@]}" chafa tmux lua unzip
 pacman -Q "${tools[@]}"

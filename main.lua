@@ -74,8 +74,9 @@ end)
 
 -- `active` is true only while this plugin's peek is running, which keeps the
 -- patched globals away from every other previewer. `current` additionally pins
--- metadata centering to the file being previewed. Both are overwritten by each
--- peek, so an aborted peek cannot leave stale state behind.
+-- metadata centering to the file being previewed. Yazi 26.9.1 runs every peek
+-- in a Lua state of its own, so neither can outlive its peek there; the checks
+-- keep it that way should a later Yazi reuse the state.
 local active, current = false, {}
 local opts, cell = nil, nil
 local widths = setmetatable({}, { __mode = "k" })
@@ -123,7 +124,14 @@ local function predict(url, rect)
 	if not cell then
 		return nil, nil, info
 	end
-	local scale = math.min(1, rect.w * cell.x / info.w, rect.h * cell.y / info.h)
+	-- Yazi also never draws an image larger than preview.max_width/max_height.
+	local scale = math.min(
+		1,
+		rect.w * cell.x / info.w,
+		rect.h * cell.y / info.h,
+		rt.preview.max_width / info.w,
+		rt.preview.max_height / info.h
+	)
 	return math.ceil(info.w * scale / cell.x), math.ceil(info.h * scale / cell.y), info
 end
 
@@ -136,6 +144,8 @@ local function learn(info, rect, drawn)
 		return false
 	elseif drawn.w >= rect.w or drawn.h >= rect.h then
 		return false -- clipped by the rect, so the pixel size it was scaled to is unknown
+	elseif info.w > rt.preview.max_width or info.h > rt.preview.max_height then
+		return false -- scaled down to Yazi's size limit, likewise
 	end
 	cell = { x = info.w / (drawn.w - 0.5), y = info.h / (drawn.h - 0.5) }
 	set_cell(cell)
@@ -151,10 +161,17 @@ local function patch()
 	local show, widget, text = ya.image_show, ya.preview_widget, ui.Text
 
 	ui.Text = function(lines)
-		local w = (active and opts.text == "block") and block_width(lines) or nil
+		-- The bundled previewer passes the width of the whole metadata block
+		-- along with the lines that fit, so that the block keeps its place while
+		-- other lines scroll into view.
+		local whole = type(lines) == "table" and lines.width or 0
+		-- "off" narrows only that block: another previewer may align its lines
+		-- within the whole pane.
+		local measure = active and (opts.text == "block" or (opts.text == "off" and whole > 0))
+		local w = measure and math.max(block_width(lines) or 0, whole) or 0
 		local h = (active and opts.vertical) and block_height(lines) or nil
 		local t = text(lines)
-		widths[t], heights[t] = w, h
+		widths[t], heights[t] = w > 0 and w or nil, h
 		return t
 	end
 
@@ -209,12 +226,12 @@ local function patch()
 	ya.preview_widget = function(job, widgets)
 		local url = job and job.file and tostring(job.file.url)
 		if active and url and url ~= current.url then
-			-- Yazi aborts a peek by dropping its coroutine, which can leave
-			-- `active` set. A draw for another file proves that happened.
+			-- A peek that ended without resetting `active` (see above); a draw for
+			-- another file proves that happened.
 			active = false
 		end
 		local mine = active and url and url == current.url
-		if not mine or opts.text == "off" or type(widgets) ~= "table" then
+		if not mine or type(widgets) ~= "table" then
 			return widget(job, widgets)
 		end
 		for _, w in ipairs(widgets) do
@@ -226,16 +243,23 @@ local function patch()
 				local x, y, width, height = area.x, area.y, area.w, area.h
 				local bw, bh = widths[w], heights[w]
 				if bw and bw < width then
-					x, width = x + (width - bw) // 2, bw
+					-- "block" moves the block to the middle. "off" leaves it where it
+					-- is, narrowed to its own width, so that a centered line such as
+					-- the ellipsis stays under it.
+					if opts.text == "block" then
+						x = x + (width - bw) // 2
+					end
+					width = bw
 				end
 				-- Text that starts at the top of the pane has no image above it to
 				-- center it, as when the image is switched off, so it is centered
-				-- top to bottom by itself.
-				if bh and bh < height and y == job.area.y then
+				-- top to bottom by itself. Once scrolled, what is left of it stays
+				-- at the top instead of moving down with every step.
+				if bh and bh < height and y == job.area.y and (job.skip or 0) == 0 then
 					local dy = (height - bh) // 2
 					y, height = y + dy, height - dy
 				end
-				if x ~= area.x or y ~= area.y then
+				if x ~= area.x or y ~= area.y or width ~= area.w then
 					w:area(ui.Rect({ x = x, y = y, w = width, h = height }))
 				end
 			end)
@@ -277,6 +301,13 @@ local function mediainfo_found(check)
 	return found ~= false
 end
 
+--- Whether Yazi caches previews of the job's file. It does not for the files in
+--- its own cache directory, which are its cached previews, and the bundled
+--- previewer cannot work without that cache.
+local function cacheable(job)
+	return not (job and job.file) or ya.file_cache({ file = job.file, skip = 0 }) ~= nil
+end
+
 local missing = {}
 
 --- The previewer to delegate to. Only peek and preload jobs carry a previewer's
@@ -289,11 +320,11 @@ local function target(job, positional, check)
 	name = type(name) == "string" and name or opts.target
 
 	-- Without the mediainfo CLI the bundled previewer has no metadata to show,
-	-- so the file goes to the previewer Yazi itself would have used, silently,
-	-- as with a missing target below. Audio has none, and keeps the bundled
-	-- previewer for its cover art.
+	-- and without Yazi's cache it cannot run, so the file goes to the previewer
+	-- Yazi itself would have used, silently, as with a missing target below.
+	-- Audio has none, and keeps the bundled previewer for its cover art.
 	if name == BUNDLED then
-		local fallback = not mediainfo_found(check) and builtin(job)
+		local fallback = (not mediainfo_found(check) or not cacheable(job)) and builtin(job)
 		return fallback and require(fallback) or mediainfo
 	end
 

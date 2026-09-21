@@ -12,7 +12,7 @@ readonly media
 trap 'rm -rf "$media"' EXIT
 
 yazi --version
-lua5.4 "$ci/../tests/metadata.lua"
+lua "$ci/../tests/metadata.lua"
 bash "$ci/samples.sh" "$media"
 bash "$ci/contract.sh" "$media"
 bash "$ci/e2e.sh" "$media"
