@@ -2,6 +2,13 @@ MIT License
 
 Copyright (c) 2026 ENEmyr
 
+The media previewer (mediainfo.lua, adobe.lua, audio.lua, const.lua, image.lua,
+none-media-preview.lua, utils.lua and video.lua) is derived from mediainfo.yazi
+(https://github.com/boydaihungst/mediainfo.yazi), which carries this notice:
+
+Copyright (c) 2024 Lauri Niskanen
+Copyright (c) 2025 Huy Hoang
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
