@@ -12,10 +12,24 @@ metadata alone. That previewer started out as
 longer maintained, and is now maintained here as part of this plugin. Any other
 previewer that draws through `ya.image_show()` can be centered instead.
 
-<p align="center">
-  <img src="assets/preview.png" width="900"
-       alt="Yazi with an image preview: the image sits in the middle of the preview pane, its metadata centered underneath" />
-</p>
+<table>
+  <tr>
+    <th width="33%">Default</th>
+    <th width="33%">Metadata hidden</th>
+    <th width="33%">Image hidden</th>
+  </tr>
+  <tr>
+    <td><img src="assets/preview.png" width="100%"
+             alt="Yazi with an image preview: the image sits in the middle of the preview pane, its metadata centered underneath" /></td>
+    <td><img src="assets/preview-metadata-hidden.png" width="100%"
+             alt="The same preview with the metadata hidden: the image alone, centered in the pane" /></td>
+    <td><img src="assets/preview-image-hidden.png" width="100%"
+             alt="The same preview with the image hidden: the metadata alone, centered in the pane" /></td>
+  </tr>
+</table>
+
+The image and the metadata can each be switched off while Yazi runs, see
+[Keymaps](#keymaps).
 
 ## Why this exists
 
